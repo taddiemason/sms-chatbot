@@ -25,7 +25,7 @@ An SMS chatbot powered by [Groq](https://console.groq.com) and [Telnyx](https://
 - Python 3.10+
 - A [Telnyx account](https://telnyx.com) with a phone number (~$0.004/SMS)
 - A [Groq API key](https://console.groq.com) (free tier available)
-- [ngrok](https://ngrok.com) for local development, or a hosted server for production
+- A public HTTPS URL for the Telnyx webhook (ngrok, Cloudflare Tunnel, or a hosted server)
 
 ---
 
@@ -33,15 +33,16 @@ An SMS chatbot powered by [Groq](https://console.groq.com) and [Telnyx](https://
 
 ```
 sms-chatbot/
-├── app.py              # Flask server and Telnyx webhook handler
-├── config.py           # All settings: model, delays, filters, paths
-├── conversation.py     # Per-sender conversation history with auto-expiry
-├── profiles.py         # Persona loading and contact file management
-├── persona.txt         # Who the bot is — edit this to change its identity
-├── contacts/           # Auto-created; one .txt file per phone number
-├── logs/               # Auto-created; daily rotating conversation logs
-├── requirements.txt    # Python dependencies
-├── .env.example        # Template for required environment variables
+├── app.py                # Flask server and Telnyx webhook handler
+├── config.py             # All settings: model, delays, filters, paths
+├── conversation.py       # Per-sender conversation history with auto-expiry
+├── profiles.py           # Persona loading and contact file management
+├── persona.txt           # Who the bot is — edit this to change its identity
+├── sms-chatbot.service   # Systemd service file for homelab/Linux deployment
+├── contacts/             # Auto-created; one .txt file per phone number
+├── logs/                 # Auto-created; daily rotating conversation logs
+├── requirements.txt      # Python dependencies
+├── .env.example          # Template for required environment variables
 └── .gitignore
 ```
 
@@ -101,7 +102,7 @@ Be as detailed as you want — the more specific, the more consistent the bot's 
 
 ---
 
-## Launching the Bot
+## Running Locally (Development)
 
 ### Step 1 — Start the server
 
@@ -130,16 +131,73 @@ Copy the `https://` forwarding URL (e.g. `https://abc123.ngrok.io`).
 
 1. Go to [Telnyx Portal](https://portal.telnyx.com) → **Messaging** → **Messaging Profiles**
 2. Create a new profile (or open an existing one)
-3. Set the **Webhook URL** to your ngrok URL + `/sms`:
+3. Set the **Inbound Webhook URL** to your ngrok URL + `/sms`:
    ```
    https://abc123.ngrok.io/sms
    ```
-4. Go to **Numbers** → your number → assign it to this messaging profile
-5. Save
+4. Leave **Failover Webhook URL** blank
+5. Go to **Numbers** → your number → assign it to this messaging profile
+6. Save
 
 Text your Telnyx number — the bot will reply.
 
 > **Note:** ngrok URLs change every time you restart it. Update the Telnyx webhook URL each session, or use a paid ngrok plan for a fixed URL.
+
+---
+
+## Deploying to a Homelab / Linux Server
+
+For 24/7 operation, run the bot on a Linux server using gunicorn (already in `requirements.txt`) and a systemd service so it restarts automatically on crashes and reboots.
+
+### Step 1 — Edit the service file
+
+Open `sms-chatbot.service` and replace both instances of `/path/to/sms-chatbot` with your actual path (e.g. `/home/youruser/sms-chatbot`). Also verify gunicorn's path:
+
+```bash
+which gunicorn
+```
+
+Update `ExecStart` if the path differs from `/usr/bin/gunicorn`.
+
+### Step 2 — Install and start the service
+
+```bash
+sudo cp sms-chatbot.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable sms-chatbot   # auto-start on boot
+sudo systemctl start sms-chatbot
+sudo systemctl status sms-chatbot   # verify it's running
+```
+
+### Step 3 — Get a public HTTPS URL
+
+The bot needs a stable public HTTPS URL for Telnyx to reach it. Two options:
+
+**Option A — Cloudflare Tunnel (recommended)**
+Free, gives a stable URL tied to your own domain, no port forwarding or SSL certificates needed. Requires a domain pointed at Cloudflare.
+
+```bash
+# Install cloudflared on the server
+curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o cloudflared
+chmod +x cloudflared && sudo mv cloudflared /usr/local/bin/
+
+# Authenticate, create tunnel, and route your domain
+cloudflared tunnel login
+cloudflared tunnel create sms-chatbot
+cloudflared tunnel route dns sms-chatbot yourdomain.com
+
+# Run as a systemd service so it starts on boot
+sudo cloudflared service install
+```
+
+Telnyx webhook URL: `https://yourdomain.com/sms`
+
+**Option B — ngrok on the server**
+Simpler if you don't have a domain. Install ngrok on the server and run it there instead of your local machine. Free tier changes URL on restart; a paid plan gives a fixed URL.
+
+### Step 4 — Update Telnyx webhook URL
+
+In the Telnyx Portal → Messaging Profiles → set the Inbound Webhook URL to your public URL + `/sms`, then save.
 
 ---
 
@@ -180,6 +238,11 @@ All messages are logged to `logs/chat.log` while the server is running:
 ```
 
 Logs rotate daily. Old files are saved as `logs/chat.log.2026-05-29` and kept for 30 days. The `logs/` folder is gitignored.
+
+To follow logs in real time on the server:
+```bash
+tail -f logs/chat.log
+```
 
 ---
 
@@ -281,20 +344,6 @@ Background thread: extract new facts → append to contacts/<number>.txt
         ▼
 Everything logged to logs/chat.log
 ```
-
----
-
-## Deploying to Production
-
-For a permanent public URL instead of ngrok:
-
-| Platform | Notes |
-|---|---|
-| [Railway](https://railway.app) | Free tier, one-click deploy from GitHub |
-| [Render](https://render.com) | Free tier, auto-deploys on git push |
-| [Fly.io](https://fly.io) | More control, generous free tier |
-
-After deploying, set your environment variables in the platform's dashboard and update the Telnyx webhook URL to your production URL.
 
 ---
 
