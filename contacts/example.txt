@@ -1,0 +1,10 @@
+- Name: Jordan
+- Age: 28
+- Lives in Atlanta, Georgia
+- Works as a marketing manager
+- Has a dog named Max (golden retriever)
+- Enjoys hiking and photography on weekends
+- Favorite food is sushi
+- Going on vacation to Mexico in June
+- Prefers short, casual replies
+- Dislikes small talk, gets straight to the point
