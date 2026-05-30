@@ -1,4 +1,4 @@
 flask
-twilio
+telnyx
 groq
 python-dotenv

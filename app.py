@@ -5,11 +5,8 @@ import logging
 import threading
 from logging.handlers import TimedRotatingFileHandler
 from dotenv import load_dotenv
-from flask import Flask, request, abort
-from twilio.twiml.messaging_response import MessagingResponse
-from twilio.rest import Client as TwilioClient
-from twilio.request_validator import RequestValidator
-from werkzeug.middleware.proxy_fix import ProxyFix
+from flask import Flask, request, abort, jsonify
+import telnyx
 from groq import Groq
 
 from config import (
@@ -45,14 +42,12 @@ log.addHandler(_console_handler)
 
 # ─── App setup ────────────────────────────────────────────────────────────────
 app = Flask(__name__)
-# Lets Flask see the real HTTPS URL when behind ngrok or a reverse proxy,
-# which is required for Twilio signature validation to work.
-app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
+
+telnyx.api_key = os.environ["TELNYX_API_KEY"]
+telnyx.public_key = os.environ["TELNYX_PUBLIC_KEY"]
+telnyx_phone = os.environ["TELNYX_PHONE_NUMBER"]
 
 groq_client = Groq(api_key=os.environ["GROQ_API_KEY"])
-twilio_client = TwilioClient(os.environ["TWILIO_ACCOUNT_SID"], os.environ["TWILIO_AUTH_TOKEN"])
-twilio_phone = os.environ["TWILIO_PHONE_NUMBER"]
-validator = RequestValidator(os.environ["TWILIO_AUTH_TOKEN"])
 history = ConversationHistory()
 
 BOT_PERSONA = profiles.load_persona() or SYSTEM_PROMPT
@@ -70,7 +65,7 @@ def _build_system_content(number: str) -> str:
 def _send_and_update(to_number: str, message: str, delay: float,
                      user_message: str, ai_reply: str) -> None:
     time.sleep(delay)
-    twilio_client.messages.create(body=message, from_=twilio_phone, to=to_number)
+    telnyx.Message.create(from_=telnyx_phone, to=to_number, text=message)
     log.info(f"[SENT] {to_number}: {message[:80]}{'...' if len(message) > 80 else ''}")
 
     if AUTO_UPDATE_CONTACTS and user_message:
@@ -79,18 +74,30 @@ def _send_and_update(to_number: str, message: str, delay: float,
 
 @app.route("/sms", methods=["POST"])
 def sms_reply():
-    signature = request.headers.get("X-Twilio-Signature", "")
-    if not validator.validate(request.url, request.form, signature):
+    # Validate the request came from Telnyx using Ed25519 signature
+    sig = request.headers.get("telnyx-signature-ed25519", "")
+    ts = request.headers.get("telnyx-timestamp", "")
+    try:
+        telnyx.Webhook.construct_event(request.data, sig, ts)
+    except Exception:
         abort(403)
 
-    from_number = request.form.get("From", "")
-    user_message = request.form.get("Body", "").strip()
+    body = request.json
+    event_type = body.get("data", {}).get("event_type", "")
+
+    # Telnyx sends multiple event types; only handle inbound SMS
+    if event_type != "message.received":
+        return jsonify({}), 200
+
+    payload = body["data"]["payload"]
+    from_number = payload["from"]["phone_number"]
+    user_message = (payload.get("text") or "").strip()
 
     if ALLOWED_NUMBERS and from_number not in ALLOWED_NUMBERS:
-        return str(MessagingResponse())
+        return jsonify({}), 200
 
     if not user_message:
-        return str(MessagingResponse())
+        return jsonify({}), 200
 
     if user_message.lower() == "reset":
         history.clear(from_number)
@@ -101,7 +108,7 @@ def sms_reply():
             daemon=True,
         )
         t.start()
-        return str(MessagingResponse())
+        return jsonify({}), 200
 
     log.info(f"[IN]   {from_number}: {user_message}")
     history.add(from_number, "user", user_message)
@@ -128,6 +135,7 @@ def sms_reply():
     delay = max(TYPING_DELAY_MIN, min(TYPING_DELAY_MAX, delay + jitter))
     log.info(f"[OUT]  {from_number} in {delay:.1f}s: {ai_reply[:80]}{'...' if len(ai_reply) > 80 else ''}")
 
+    # Send after delay in background; also runs contact auto-update after sending
     t = threading.Thread(
         target=_send_and_update,
         args=(from_number, ai_reply, delay, user_message, ai_reply),
@@ -135,7 +143,8 @@ def sms_reply():
     )
     t.start()
 
-    return str(MessagingResponse())
+    # Respond to Telnyx immediately — actual SMS sent via REST in background thread
+    return jsonify({}), 200
 
 
 if __name__ == "__main__":
