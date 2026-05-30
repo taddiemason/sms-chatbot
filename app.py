@@ -79,7 +79,8 @@ def sms_reply():
     ts = request.headers.get("telnyx-timestamp", "")
     try:
         telnyx.Webhook.construct_event(request.data, sig, ts)
-    except Exception:
+    except Exception as e:
+        log.error(f"[WEBHOOK] Signature validation failed: {e} | sig={'present' if sig else 'MISSING'} | ts={'present' if ts else 'MISSING'}")
         abort(403)
 
     body = request.json
