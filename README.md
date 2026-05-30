@@ -1,6 +1,6 @@
 # SMS AI Chatbot
 
-An SMS chatbot powered by [Groq](https://console.groq.com) and [Twilio](https://www.twilio.com). When someone texts your Twilio number, the bot replies using a large language model — with per-sender conversation memory, a fully customizable persona, automatic contact learning, and a human-like typing delay.
+An SMS chatbot powered by [Groq](https://console.groq.com) and [Telnyx](https://telnyx.com). When someone texts your Telnyx number, the bot replies using a large language model — with per-sender conversation memory, a fully customizable persona, automatic contact learning, and a human-like typing delay.
 
 ---
 
@@ -15,7 +15,7 @@ An SMS chatbot powered by [Groq](https://console.groq.com) and [Twilio](https://
 - **Auto-expiry** — conversation history clears automatically after inactivity
 - **Reset command** — users can text `reset` to wipe their history and start fresh
 - **Number whitelist** — optionally restrict the bot to specific phone numbers only
-- **Twilio request validation** — rejects spoofed webhook requests not signed by Twilio
+- **Telnyx request validation** — rejects spoofed webhook requests using Ed25519 signature verification
 - **Graceful error handling** — friendly fallback message if the AI API fails
 
 ---
@@ -23,7 +23,7 @@ An SMS chatbot powered by [Groq](https://console.groq.com) and [Twilio](https://
 ## Requirements
 
 - Python 3.10+
-- A [Twilio account](https://www.twilio.com) with a phone number (~$1/month)
+- A [Telnyx account](https://telnyx.com) with a phone number (~$0.004/SMS)
 - A [Groq API key](https://console.groq.com) (free tier available)
 - [ngrok](https://ngrok.com) for local development, or a hosted server for production
 
@@ -33,7 +33,7 @@ An SMS chatbot powered by [Groq](https://console.groq.com) and [Twilio](https://
 
 ```
 sms-chatbot/
-├── app.py              # Flask server and Twilio webhook handler
+├── app.py              # Flask server and Telnyx webhook handler
 ├── config.py           # All settings: model, delays, filters, paths
 ├── conversation.py     # Per-sender conversation history with auto-expiry
 ├── profiles.py         # Persona loading and contact file management
@@ -73,17 +73,17 @@ cp .env.example .env
 Open `.env` and set:
 
 ```
-TWILIO_ACCOUNT_SID=ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-TWILIO_AUTH_TOKEN=your_auth_token_here
-TWILIO_PHONE_NUMBER=+1xxxxxxxxxx
+TELNYX_API_KEY=KEY_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+TELNYX_PUBLIC_KEY=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+TELNYX_PHONE_NUMBER=+1xxxxxxxxxx
 GROQ_API_KEY=gsk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 ```
 
 | Variable | Where to find it |
 |---|---|
-| `TWILIO_ACCOUNT_SID` | [Twilio Console](https://console.twilio.com) → Account Info |
-| `TWILIO_AUTH_TOKEN` | Same page, below the SID |
-| `TWILIO_PHONE_NUMBER` | Twilio Console → Phone Numbers → your number (E.164 format, e.g. `+15551234567`) |
+| `TELNYX_API_KEY` | [Telnyx Portal](https://portal.telnyx.com) → API Keys → create a key (starts with `KEY_`) |
+| `TELNYX_PUBLIC_KEY` | Same page → Public Key section |
+| `TELNYX_PHONE_NUMBER` | Portal → Numbers → your number (E.164 format, e.g. `+15551234567`) |
 | `GROQ_API_KEY` | [console.groq.com](https://console.groq.com) → API Keys |
 
 ### 4. Set up the bot's persona
@@ -126,18 +126,20 @@ ngrok http 5000
 
 Copy the `https://` forwarding URL (e.g. `https://abc123.ngrok.io`).
 
-### Step 3 — Wire up Twilio
+### Step 3 — Wire up Telnyx
 
-1. Go to [Twilio Console](https://console.twilio.com) → **Phone Numbers** → your number
-2. Under **Messaging → "A message comes in"**, set the webhook to your ngrok URL + `/sms`:
+1. Go to [Telnyx Portal](https://portal.telnyx.com) → **Messaging** → **Messaging Profiles**
+2. Create a new profile (or open an existing one)
+3. Set the **Webhook URL** to your ngrok URL + `/sms`:
    ```
    https://abc123.ngrok.io/sms
    ```
-3. Set the method to **HTTP POST** and save
+4. Go to **Numbers** → your number → assign it to this messaging profile
+5. Save
 
-Text your Twilio number — the bot will reply.
+Text your Telnyx number — the bot will reply.
 
-> **Note:** ngrok URLs change every time you restart it. Update the Twilio webhook URL each session, or use a paid ngrok plan for a fixed URL.
+> **Note:** ngrok URLs change every time you restart it. Update the Telnyx webhook URL each session, or use a paid ngrok plan for a fixed URL.
 
 ---
 
@@ -185,7 +187,7 @@ Logs rotate daily. Old files are saved as `logs/chat.log.2026-05-29` and kept fo
 
 ### Normal conversation
 
-Text the Twilio number. The bot replies based on the persona and remembers the conversation.
+Text the Telnyx number. The bot replies based on the persona and remembers the conversation.
 
 ### Reset history
 
@@ -250,14 +252,15 @@ ALLOWED_NUMBERS = {"+15551234567", "+15559876543"}
 ## How It Works
 
 ```
-User texts Twilio number
+User texts Telnyx number
         │
         ▼
-Twilio sends HTTP POST to /sms webhook
+Telnyx sends HTTP POST to /sms webhook (JSON body)
         │
         ▼
-Server validates Twilio signature (rejects spoofed requests)
+Server validates Ed25519 signature (rejects spoofed requests)
         │
+        ├─ Non-SMS event? → ignore, return 200
         ├─ "reset"? → clear history, send confirmation
         │
         ▼
@@ -267,10 +270,10 @@ Load persona.txt + contacts/<number>.txt → build system prompt
 Groq API called with system prompt + conversation history
         │
         ▼
-Empty response returned to Twilio immediately (avoids 15s timeout)
+200 response returned to Telnyx immediately (avoids webhook timeout)
         │
         ▼
-Background thread: sleep(typing delay) → send SMS via Twilio REST API
+Background thread: sleep(typing delay) → send SMS via Telnyx REST API
         │
         ▼
 Background thread: extract new facts → append to contacts/<number>.txt
@@ -291,7 +294,7 @@ For a permanent public URL instead of ngrok:
 | [Render](https://render.com) | Free tier, auto-deploys on git push |
 | [Fly.io](https://fly.io) | More control, generous free tier |
 
-After deploying, set your environment variables in the platform's dashboard and update the Twilio webhook URL to your production URL.
+After deploying, set your environment variables in the platform's dashboard and update the Telnyx webhook URL to your production URL.
 
 ---
 
@@ -299,5 +302,5 @@ After deploying, set your environment variables in the platform's dashboard and 
 
 - **Never commit `.env`** — it's in `.gitignore` by default
 - **`contacts/` and `logs/` are gitignored** — personal info and conversations stay local
-- **Twilio request validation** is enabled — every webhook verified to be signed by Twilio
+- **Telnyx Ed25519 validation** is enabled — every webhook cryptographically verified
 - **Number whitelisting** via `ALLOWED_NUMBERS` restricts who can interact with the bot
