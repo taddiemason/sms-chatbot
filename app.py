@@ -13,8 +13,10 @@ from groq import Groq
 from config import (
     SYSTEM_PROMPT, GROQ_MODEL, ALLOWED_NUMBERS, MAX_TOKENS,
     TYPING_SPEED_WPM, TYPING_JITTER_FRACTION, TYPING_DELAY_MIN, TYPING_DELAY_MAX,
+    AUTO_UPDATE_CONTACTS,
 )
 from conversation import ConversationHistory
+import profiles
 
 load_dotenv()
 
@@ -29,11 +31,27 @@ twilio_phone = os.environ["TWILIO_PHONE_NUMBER"]
 validator = RequestValidator(os.environ["TWILIO_AUTH_TOKEN"])
 history = ConversationHistory()
 
+# Load bot persona once at startup; fall back to config SYSTEM_PROMPT if file is missing
+BOT_PERSONA = profiles.load_persona() or SYSTEM_PROMPT
+print(f"[PERSONA] Loaded: {BOT_PERSONA[:80]}{'...' if len(BOT_PERSONA) > 80 else ''}")
 
-def _send_after_delay(to_number: str, message: str, delay: float) -> None:
+
+def _build_system_content(number: str) -> str:
+    contact = profiles.load_contact(number)
+    content = BOT_PERSONA
+    if contact:
+        content += f"\n\nWhat you know about this person:\n{contact}"
+    return content
+
+
+def _send_and_update(to_number: str, message: str, delay: float,
+                     user_message: str, ai_reply: str) -> None:
     time.sleep(delay)
     twilio_client.messages.create(body=message, from_=twilio_phone, to=to_number)
     print(f"[SENT] {to_number}: {message[:60]}{'...' if len(message) > 60 else ''}")
+
+    if AUTO_UPDATE_CONTACTS:
+        profiles.update_contact(to_number, user_message, ai_reply, groq_client)
 
 
 @app.route("/sms", methods=["POST"])
@@ -57,8 +75,8 @@ def sms_reply():
         history.clear(from_number)
         print(f"[RESET] {from_number}")
         t = threading.Thread(
-            target=_send_after_delay,
-            args=(from_number, "Conversation cleared. Starting fresh!", TYPING_DELAY_MIN),
+            target=_send_and_update,
+            args=(from_number, "Conversation cleared. Starting fresh!", TYPING_DELAY_MIN, "", ""),
             daemon=True,
         )
         t.start()
@@ -66,7 +84,9 @@ def sms_reply():
 
     print(f"[IN]  {from_number}: {user_message}")
     history.add(from_number, "user", user_message)
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}] + history.get(from_number)
+
+    system_content = _build_system_content(from_number)
+    messages = [{"role": "system", "content": system_content}] + history.get(from_number)
 
     try:
         completion = groq_client.chat.completions.create(
@@ -78,8 +98,8 @@ def sms_reply():
         history.add(from_number, "assistant", ai_reply)
     except Exception as e:
         print(f"[ERR] Groq error for {from_number}: {e}")
-        # Don't add the failed exchange to history so the next message isn't confused
         ai_reply = "Sorry, I'm having trouble right now. Try again in a moment."
+        user_message = ""  # don't try to extract facts from a failed exchange
 
     word_count = len(ai_reply.split())
     delay = (word_count / TYPING_SPEED_WPM) * 60
@@ -87,10 +107,10 @@ def sms_reply():
     delay = max(TYPING_DELAY_MIN, min(TYPING_DELAY_MAX, delay + jitter))
     print(f"[OUT] {from_number} in {delay:.1f}s: {ai_reply[:60]}{'...' if len(ai_reply) > 60 else ''}")
 
-    # Send after delay in a background thread so Twilio's webhook doesn't time out
+    # Send after delay in background; also runs contact auto-update after sending
     t = threading.Thread(
-        target=_send_after_delay,
-        args=(from_number, ai_reply, delay),
+        target=_send_and_update,
+        args=(from_number, ai_reply, delay, user_message, ai_reply),
         daemon=True,
     )
     t.start()

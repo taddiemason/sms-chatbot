@@ -7,6 +7,10 @@ Never use markdown formatting like ** or # since it won't render in SMS."""
 GROQ_MODEL = "llama-3.3-70b-versatile"
 MAX_TOKENS = 300
 
+PERSONA_FILE = "persona.txt"
+CONTACTS_DIR = "contacts"
+AUTO_UPDATE_CONTACTS = True
+
 # ─── Context Window ────────────────────────────────────────────────────────────
 # How many past messages (user + assistant combined) to keep per sender.
 # Higher = more memory, more tokens used per request.
