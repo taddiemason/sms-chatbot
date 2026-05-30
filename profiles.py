@@ -1,5 +1,8 @@
 import os
+import logging
 from config import PERSONA_FILE, CONTACTS_DIR
+
+log = logging.getLogger("smsbot")
 
 EXTRACT_MODEL = "llama-3.1-8b-instant"
 
@@ -51,7 +54,7 @@ def update_contact(number: str, user_message: str, ai_reply: str, groq_client) -
         )
         new_facts = result.choices[0].message.content.strip()
     except Exception as e:
-        print(f"[PROFILE] Extraction failed for {number}: {e}")
+        log.error(f"[PROFILE] Extraction failed for {number}: {e}")
         return
 
     if not new_facts:
@@ -63,7 +66,7 @@ def update_contact(number: str, user_message: str, ai_reply: str, groq_client) -
         if existing:
             f.write("\n")
         f.write(new_facts + "\n")
-    print(f"[PROFILE] Updated contact for {number}: {new_facts[:80]}")
+    log.info(f"[PROFILE] Updated contact for {number}: {new_facts[:80]}")
 
 
 def _contact_path(number: str) -> str:

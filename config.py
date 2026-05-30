@@ -10,6 +10,7 @@ MAX_TOKENS = 300
 PERSONA_FILE = "persona.txt"
 CONTACTS_DIR = "contacts"
 AUTO_UPDATE_CONTACTS = True
+LOGS_DIR = "logs"
 
 # ─── Context Window ────────────────────────────────────────────────────────────
 # How many past messages (user + assistant combined) to keep per sender.
