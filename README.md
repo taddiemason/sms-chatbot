@@ -1,27 +1,29 @@
 # SMS AI Chatbot
 
-An SMS chatbot powered by [Groq](https://console.groq.com) and [Twilio](https://www.twilio.com). When someone texts your Twilio number, the bot replies using a large language model — with per-sender conversation memory, a fully customizable personality, and a human-like typing delay before sending.
+An SMS chatbot powered by [Groq](https://console.groq.com) and [Twilio](https://www.twilio.com). When someone texts your Twilio number, the bot replies using a large language model — with per-sender conversation memory, a fully customizable persona, automatic contact learning, and a human-like typing delay.
 
 ---
 
 ## Features
 
 - **AI replies over SMS** — powered by Groq's fast LLM inference (Llama 3.3 70B by default)
-- **Conversation memory** — each sender gets their own context window; the bot remembers past messages
-- **Custom system prompt** — define the bot's name, personality, tone, and rules in one place
-- **Human-like typing delay** — replies are sent after a realistic delay based on word count
-- **Auto-expiry** — conversation history clears automatically after a period of inactivity
+- **Bot persona file** — define the bot's name, personality, and backstory in `persona.txt`
+- **Per-contact memory** — the bot automatically learns and remembers facts about each person it talks to
+- **Conversation history** — each sender gets their own rolling context window
+- **Human-like typing delay** — replies sent after a realistic delay based on word count + random jitter
+- **Conversation logs** — every message saved to daily rotating log files in `logs/`
+- **Auto-expiry** — conversation history clears automatically after inactivity
 - **Reset command** — users can text `reset` to wipe their history and start fresh
-- **Number whitelist** — optionally restrict the bot to respond only to specific phone numbers
+- **Number whitelist** — optionally restrict the bot to specific phone numbers only
 - **Twilio request validation** — rejects spoofed webhook requests not signed by Twilio
-- **Graceful error handling** — if the AI API fails, the user gets a friendly message instead of silence
+- **Graceful error handling** — friendly fallback message if the AI API fails
 
 ---
 
 ## Requirements
 
 - Python 3.10+
-- A [Twilio account](https://www.twilio.com) with a phone number
+- A [Twilio account](https://www.twilio.com) with a phone number (~$1/month)
 - A [Groq API key](https://console.groq.com) (free tier available)
 - [ngrok](https://ngrok.com) for local development, or a hosted server for production
 
@@ -31,35 +33,44 @@ An SMS chatbot powered by [Groq](https://console.groq.com) and [Twilio](https://
 
 ```
 sms-chatbot/
-├── app.py            # Flask server and Twilio webhook handler
-├── config.py         # All settings: system prompt, model, delays, filters
-├── conversation.py   # Per-sender conversation history with auto-expiry
-├── requirements.txt  # Python dependencies
-├── .env.example      # Template for required environment variables
+├── app.py              # Flask server and Twilio webhook handler
+├── config.py           # All settings: model, delays, filters, paths
+├── conversation.py     # Per-sender conversation history with auto-expiry
+├── profiles.py         # Persona loading and contact file management
+├── persona.txt         # Who the bot is — edit this to change its identity
+├── contacts/           # Auto-created; one .txt file per phone number
+├── logs/               # Auto-created; daily rotating conversation logs
+├── requirements.txt    # Python dependencies
+├── .env.example        # Template for required environment variables
 └── .gitignore
 ```
 
 ---
 
-## Setup
+## Installation
 
-### 1. Clone and install dependencies
+### 1. Clone the repo
 
 ```bash
 git clone https://github.com/taddiemason/sms-chatbot.git
 cd sms-chatbot
+```
+
+### 2. Install dependencies
+
+```bash
 pip install -r requirements.txt
 ```
 
-### 2. Create your `.env` file
+### 3. Set up your `.env` file
 
-Copy the example file and fill in your credentials:
+Copy the example and fill in your credentials:
 
 ```bash
 cp .env.example .env
 ```
 
-Open `.env` and set the following:
+Open `.env` and set:
 
 ```
 TWILIO_ACCOUNT_SID=ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
@@ -72,128 +83,101 @@ GROQ_API_KEY=gsk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 |---|---|
 | `TWILIO_ACCOUNT_SID` | [Twilio Console](https://console.twilio.com) → Account Info |
 | `TWILIO_AUTH_TOKEN` | Same page, below the SID |
-| `TWILIO_PHONE_NUMBER` | Twilio Console → Phone Numbers → your number (in E.164 format, e.g. `+15551234567`) |
+| `TWILIO_PHONE_NUMBER` | Twilio Console → Phone Numbers → your number (E.164 format, e.g. `+15551234567`) |
 | `GROQ_API_KEY` | [console.groq.com](https://console.groq.com) → API Keys |
 
-### 3. Customize the bot
+### 4. Set up the bot's persona
 
-Open `config.py` to configure the bot's behavior:
+Edit `persona.txt` to define who the bot is:
 
-```python
-SYSTEM_PROMPT = """You are a friendly assistant communicating over SMS.
-Keep replies concise. Never use markdown formatting."""
+```
+Your name is Alex. You are 26 years old and work as a personal assistant.
+You are warm, witty, and direct. You have a dry sense of humor but are never mean.
+Communicate casually over text — no corporate tone, no markdown formatting.
+Keep replies short and natural since this is SMS, but be personal and genuine.
 ```
 
-This is where you define the bot's personality. See the [Configuration](#configuration) section for all available settings.
+Be as detailed as you want — the more specific, the more consistent the bot's personality.
 
-### 4. Run the server
+---
+
+## Launching the Bot
+
+### Step 1 — Start the server
 
 ```bash
 python app.py
 ```
 
-The server starts on port `5000`.
+You should see:
+```
+2026-05-30 14:00:01 [PERSONA] Loaded: Your name is Alex...
+```
 
-### 5. Expose it with ngrok
+The server runs on port `5000`.
 
-In a second terminal:
+### Step 2 — Expose it with ngrok
+
+Open a second terminal and run:
 
 ```bash
 ngrok http 5000
 ```
 
-Copy the `https://` URL ngrok gives you (e.g. `https://abc123.ngrok.io`).
+Copy the `https://` forwarding URL (e.g. `https://abc123.ngrok.io`).
 
-### 6. Wire up Twilio
+### Step 3 — Wire up Twilio
 
 1. Go to [Twilio Console](https://console.twilio.com) → **Phone Numbers** → your number
-2. Under **Messaging**, find **"A message comes in"**
-3. Set the webhook URL to your ngrok URL + `/sms`:
+2. Under **Messaging → "A message comes in"**, set the webhook to your ngrok URL + `/sms`:
    ```
    https://abc123.ngrok.io/sms
    ```
-4. Make sure the method is set to **HTTP POST**
-5. Save
+3. Set the method to **HTTP POST** and save
 
 Text your Twilio number — the bot will reply.
 
+> **Note:** ngrok URLs change every time you restart it. Update the Twilio webhook URL each session, or use a paid ngrok plan for a fixed URL.
+
 ---
 
-## Configuration
+## Persona & Contact Files
 
-All settings live in `config.py`. Restart the server after making changes.
+### Bot persona — `persona.txt`
 
-### AI Behavior
+This file defines who the bot is. Edit it freely — it's loaded once when the server starts, so restart after making changes.
 
-```python
-SYSTEM_PROMPT = "..."
+If `persona.txt` is missing, the bot falls back to `SYSTEM_PROMPT` in `config.py`.
+
+### Contact files — `contacts/<number>.txt`
+
+The bot automatically creates and updates a file for each person it talks to. After every exchange, a fast AI call extracts any new facts and appends them:
+
 ```
-Controls the bot's entire personality, tone, rules, and knowledge. Be specific — the more detail you provide, the more consistent the bot's behavior.
-
-**Examples:**
-```python
-# Customer support agent
-SYSTEM_PROMPT = """You are Alex, a support agent for Acme Corp.
-Only answer questions about our products. If you can't help, say so politely.
-Never discuss competitors. Keep replies under 3 sentences."""
-
-# Personal assistant
-SYSTEM_PROMPT = """You are a personal assistant. Be direct and concise.
-The user's name is Jordan. Remember their preferences as they share them."""
+- Name: Jordan
+- Works in marketing
+- Has a dog named Max (golden retriever)
+- Going on vacation to Mexico in June
 ```
 
-```python
-GROQ_MODEL = "llama-3.3-70b-versatile"
+You can also edit these files manually — changes take effect on the next incoming message without restarting the server. The `contacts/` folder is gitignored so personal info never gets committed.
+
+Set `AUTO_UPDATE_CONTACTS = False` in `config.py` to disable automatic learning.
+
+---
+
+## Conversation Logs
+
+All messages are logged to `logs/chat.log` while the server is running:
+
 ```
-The Groq model to use. Options:
-| Model | Speed | Notes |
-|---|---|---|
-| `llama-3.3-70b-versatile` | Fast | Default — best balance of quality and speed |
-| `llama-3.1-8b-instant` | Very fast | Smaller, good for simple conversations |
-| `mixtral-8x7b-32768` | Fast | Larger context window |
-
-```python
-MAX_TOKENS = 300
-```
-Maximum length of the AI's reply. 300 tokens ≈ ~225 words, which is comfortable for SMS.
-
-### Conversation Memory
-
-```python
-MAX_HISTORY_MESSAGES = 20
-```
-How many messages (user + assistant combined) to remember per sender. Higher values give the bot more context but use more tokens per request.
-
-```python
-CONVERSATION_EXPIRY_HOURS = 24
-```
-If a sender hasn't texted in this many hours, their history is automatically cleared on their next message. Set to a large number (e.g. `999`) to effectively disable expiry.
-
-### Number Filter
-
-```python
-ALLOWED_NUMBERS = set()
-```
-Leave empty to respond to everyone. Add numbers in E.164 format to whitelist specific senders:
-
-```python
-ALLOWED_NUMBERS = {"+15551234567", "+15559876543"}
+2026-05-30 14:02:11 [IN]   +15551234567: hey whats up
+2026-05-30 14:02:14 [OUT]  +15551234567 in 3.2s: Not much, just hanging. What's going on?
+2026-05-30 14:02:17 [SENT] +15551234567: Not much, just hanging. What's going on?
+2026-05-30 14:02:18 [PROFILE] Updated contact for +15551234567: - Name: Jordan
 ```
 
-Texts from numbers not in the list are silently ignored.
-
-### Typing Delay
-
-Simulates a human typing before sending the reply.
-
-```python
-TYPING_SPEED_WPM = 40        # words per minute (human average: 38–45)
-TYPING_JITTER_FRACTION = 0.3 # ±30% random variation per message
-TYPING_DELAY_MIN = 1.0       # always wait at least this many seconds
-TYPING_DELAY_MAX = 15.0      # never wait longer than this
-```
-
-The delay is calculated from the word count of the reply, then random jitter is applied to make it feel natural. Set `TYPING_DELAY_MIN = 0` and `TYPING_DELAY_MAX = 0` to disable.
+Logs rotate daily. Old files are saved as `logs/chat.log.2026-05-29` and kept for 30 days. The `logs/` folder is gitignored.
 
 ---
 
@@ -201,11 +185,65 @@ The delay is calculated from the word count of the reply, then random jitter is 
 
 ### Normal conversation
 
-Just text the Twilio number. The bot replies based on your system prompt and remembers the conversation.
+Text the Twilio number. The bot replies based on the persona and remembers the conversation.
 
 ### Reset history
 
-Text `reset` (case-insensitive) to wipe your conversation history and start fresh. The bot replies with a confirmation message.
+Text `reset` (case-insensitive) to wipe your conversation history and start fresh.
+
+---
+
+## Configuration
+
+All settings live in `config.py`. Restart the server after making changes.
+
+### AI
+
+| Setting | Default | Description |
+|---|---|---|
+| `GROQ_MODEL` | `llama-3.3-70b-versatile` | Model used for replies |
+| `MAX_TOKENS` | `300` | Max reply length (~225 words) |
+
+Available models:
+| Model | Speed | Notes |
+|---|---|---|
+| `llama-3.3-70b-versatile` | Fast | Default — best quality/speed balance |
+| `llama-3.1-8b-instant` | Very fast | Good for simple conversations |
+| `mixtral-8x7b-32768` | Fast | Larger context window |
+
+### Memory
+
+| Setting | Default | Description |
+|---|---|---|
+| `MAX_HISTORY_MESSAGES` | `20` | Messages to keep per sender (user + bot combined) |
+| `CONVERSATION_EXPIRY_HOURS` | `24` | Hours of inactivity before history auto-clears |
+
+### Contact Learning
+
+| Setting | Default | Description |
+|---|---|---|
+| `AUTO_UPDATE_CONTACTS` | `True` | Whether to auto-extract facts into contact files |
+| `CONTACTS_DIR` | `"contacts"` | Folder where contact files are stored |
+
+### Number Filter
+
+```python
+ALLOWED_NUMBERS = set()  # empty = respond to everyone
+```
+
+To restrict to specific numbers:
+```python
+ALLOWED_NUMBERS = {"+15551234567", "+15559876543"}
+```
+
+### Typing Delay
+
+| Setting | Default | Description |
+|---|---|---|
+| `TYPING_SPEED_WPM` | `40` | Words per minute (human avg: 38–45) |
+| `TYPING_JITTER_FRACTION` | `0.3` | ±30% random variation |
+| `TYPING_DELAY_MIN` | `1.0` | Minimum delay in seconds |
+| `TYPING_DELAY_MAX` | `15.0` | Maximum delay in seconds |
 
 ---
 
@@ -215,52 +253,51 @@ Text `reset` (case-insensitive) to wipe your conversation history and start fres
 User texts Twilio number
         │
         ▼
-Twilio sends HTTP POST to /sms (your server)
+Twilio sends HTTP POST to /sms webhook
         │
         ▼
 Server validates Twilio signature (rejects spoofed requests)
         │
-        ├─ "reset" command? → clear history, send confirmation, done
+        ├─ "reset"? → clear history, send confirmation
         │
         ▼
-User message added to conversation history
+Load persona.txt + contacts/<number>.txt → build system prompt
         │
         ▼
-Groq API called with system prompt + full conversation history
+Groq API called with system prompt + conversation history
         │
         ▼
-AI reply added to conversation history
+Empty response returned to Twilio immediately (avoids 15s timeout)
         │
         ▼
-Empty response sent back to Twilio immediately (avoids timeout)
+Background thread: sleep(typing delay) → send SMS via Twilio REST API
         │
         ▼
-Background thread waits (typing delay) then sends SMS via Twilio REST API
+Background thread: extract new facts → append to contacts/<number>.txt
         │
         ▼
-User receives reply
+Everything logged to logs/chat.log
 ```
 
 ---
 
 ## Deploying to Production
 
-For a permanent public URL (instead of ngrok), deploy the Flask app to any hosting platform:
+For a permanent public URL instead of ngrok:
 
 | Platform | Notes |
 |---|---|
-| [Railway](https://railway.app) | Free tier, easy deploy from GitHub |
-| [Render](https://render.com) | Free tier with auto-deploy from GitHub |
+| [Railway](https://railway.app) | Free tier, one-click deploy from GitHub |
+| [Render](https://render.com) | Free tier, auto-deploys on git push |
 | [Fly.io](https://fly.io) | More control, generous free tier |
 
-After deploying, update your Twilio webhook URL from the ngrok URL to your production URL.
-
-Make sure to set your environment variables (`TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_PHONE_NUMBER`, `GROQ_API_KEY`) in the platform's dashboard — never commit your `.env` file.
+After deploying, set your environment variables in the platform's dashboard and update the Twilio webhook URL to your production URL.
 
 ---
 
 ## Security Notes
 
-- **Never commit `.env`** — it's listed in `.gitignore` by default
-- **Twilio request validation** is enabled by default — every webhook is verified to be signed by Twilio
-- **Number whitelisting** via `ALLOWED_NUMBERS` adds an extra layer if you want a private bot
+- **Never commit `.env`** — it's in `.gitignore` by default
+- **`contacts/` and `logs/` are gitignored** — personal info and conversations stay local
+- **Twilio request validation** is enabled — every webhook verified to be signed by Twilio
+- **Number whitelisting** via `ALLOWED_NUMBERS` restricts who can interact with the bot
