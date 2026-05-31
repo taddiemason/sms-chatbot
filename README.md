@@ -29,6 +29,8 @@ sms-chatbot/
 ├── conversation.py       # Per-sender conversation history with auto-expiry
 ├── profiles.py           # Persona loading and contact file management
 ├── send.py               # Standalone utility for sending one-off SMS messages
+├── install.py            # One-time setup script — installs deps and configures .env
+├── check_services.py     # Health check — verifies all services are running
 ├── persona.txt           # Who the bot is — edit this to change its identity
 ├── sms-chatbot.service   # Systemd service file for homelab/Linux deployment
 ├── contacts/             # Auto-created; one .txt file per phone number
@@ -41,6 +43,20 @@ sms-chatbot/
 ---
 
 ## Setup
+
+### Automated setup (recommended)
+
+After cloning, run the setup script — it installs dependencies, walks you through entering credentials, creates `persona.txt` if missing, and runs the health check at the end:
+
+```bash
+python install.py
+```
+
+Re-running it is safe; it only prompts for values that are missing from `.env`.
+
+The manual steps below cover the same ground in detail if you prefer to set things up yourself or want to understand what the script does.
+
+---
 
 ### Step 1 — Clone the repo
 
@@ -394,6 +410,24 @@ ALLOWED_NUMBERS = {"+15551234567", "+15559876543"}
 |---|---|
 | Start chatting | Text your Vonage number — the bot replies automatically |
 | Reset history | Text `reset` (case-insensitive) to wipe your conversation and start fresh |
+
+### Health check
+
+Verify that all required services are reachable before starting (or to diagnose issues):
+
+```bash
+python check_services.py
+```
+
+Checks in order: env vars set, `persona.txt` present, Python packages installed, Groq API reachable, Vonage API reachable, Flask server on port 5000, and active ngrok tunnel. If an ngrok tunnel to port 5000 is found, it prints the full Vonage webhook URL so you can copy it directly.
+
+Exits with code `0` if everything passes, `1` if anything needs attention. Can be chained:
+
+```bash
+python check_services.py && python app.py
+```
+
+---
 
 ### Viewing logs
 
