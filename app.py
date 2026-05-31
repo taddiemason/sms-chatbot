@@ -123,11 +123,12 @@ def sms_reply():
             messages=messages,
             max_tokens=MAX_TOKENS,
         )
-        ai_reply = completion.choices[0].message.content
+        ai_reply = completion.choices[0].message.content or "Sorry, I couldn't come up with a response."
         history.add(from_number, "assistant", ai_reply)
     except Exception as e:
         log.error(f"[ERR]  Groq error for {from_number}: {e}")
         ai_reply = "Sorry, I'm having trouble right now. Try again in a moment."
+        history.add(from_number, "assistant", ai_reply)
         user_message = ""
 
     word_count = len(ai_reply.split())
