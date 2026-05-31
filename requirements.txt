@@ -1,5 +1,5 @@
 flask
 gunicorn
-telnyx
+vonage
 groq
 python-dotenv

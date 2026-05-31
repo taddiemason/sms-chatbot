@@ -1,6 +1,6 @@
 # SMS AI Chatbot
 
-An SMS chatbot powered by [Groq](https://console.groq.com) and [Telnyx](https://telnyx.com). When someone texts your Telnyx number, the bot replies using a large language model — with per-sender conversation memory, a fully customizable persona, automatic contact learning, and a human-like typing delay.
+An SMS chatbot powered by [Groq](https://console.groq.com) and [Vonage](https://vonage.com). When someone texts your Vonage number, the bot replies using a large language model — with per-sender conversation memory, a fully customizable persona, automatic contact learning, and a human-like typing delay.
 
 ---
 
@@ -15,17 +15,8 @@ An SMS chatbot powered by [Groq](https://console.groq.com) and [Telnyx](https://
 - **Auto-expiry** — conversation history clears automatically after inactivity
 - **Reset command** — users can text `reset` to wipe their history and start fresh
 - **Number whitelist** — optionally restrict the bot to specific phone numbers only
-- **Telnyx request validation** — rejects spoofed webhook requests using Ed25519 signature verification
+- **Optional webhook signature verification** — rejects spoofed requests when `VONAGE_SIGNATURE_SECRET` is set
 - **Graceful error handling** — friendly fallback message if the AI API fails
-
----
-
-## Requirements
-
-- Python 3.10+
-- A [Telnyx account](https://telnyx.com) with a phone number (~$0.004/SMS)
-- A [Groq API key](https://console.groq.com) (free tier available)
-- A public HTTPS URL for the Telnyx webhook (ngrok, Cloudflare Tunnel, or a hosted server)
 
 ---
 
@@ -33,10 +24,11 @@ An SMS chatbot powered by [Groq](https://console.groq.com) and [Telnyx](https://
 
 ```
 sms-chatbot/
-├── app.py                # Flask server and Telnyx webhook handler
+├── app.py                # Flask server and Vonage webhook handler
 ├── config.py             # All settings: model, delays, filters, paths
 ├── conversation.py       # Per-sender conversation history with auto-expiry
 ├── profiles.py           # Persona loading and contact file management
+├── send.py               # Standalone utility for sending one-off SMS messages
 ├── persona.txt           # Who the bot is — edit this to change its identity
 ├── sms-chatbot.service   # Systemd service file for homelab/Linux deployment
 ├── contacts/             # Auto-created; one .txt file per phone number
@@ -48,46 +40,94 @@ sms-chatbot/
 
 ---
 
-## Installation
+## Setup
 
-### 1. Clone the repo
+### Step 1 — Clone the repo
 
 ```bash
 git clone https://github.com/taddiemason/sms-chatbot.git
 cd sms-chatbot
 ```
 
-### 2. Install dependencies
+### Step 2 — Install dependencies
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 3. Set up your `.env` file
+### Step 3 — Get a Groq API key
 
-Copy the example and fill in your credentials:
+1. Go to [console.groq.com](https://console.groq.com) and sign in or create an account
+2. Click **API Keys** in the left sidebar
+3. Click **Create API Key**, give it a name, and copy the key (starts with `gsk_`)
+
+The free tier is generous enough to run this bot without paying anything.
+
+### Step 4 — Set up Vonage
+
+#### 4a. Create an account and get credentials
+
+1. Sign up at [vonage.com](https://vonage.com) (or log in)
+2. From the dashboard, your **API Key** and **API Secret** are shown on the main page under your account name
+3. Copy both — you'll need them for the `.env` file
+
+#### 4b. Buy a phone number
+
+1. In the Vonage dashboard, go to **Build & Manage** → **Numbers** → **Buy Numbers**
+2. Search by country and select a number with SMS capability
+3. Click **Buy** to confirm
+
+#### 4c. Configure the inbound webhook
+
+This is how Vonage tells your bot when a text message arrives.
+
+1. Go to **Build & Manage** → **Numbers** → **Your Numbers**
+2. Click the gear icon next to your number
+3. Under **SMS**, set the **Inbound Webhook URL** to:
+   ```
+   https://yourdomain.com/sms
+   ```
+   (You'll get this URL in later steps — come back and fill it in once you have it)
+4. Set the **HTTP Method** to `POST-Form`
+5. Click **Save**
+
+#### 4d. (Optional) Enable webhook signature verification
+
+If you want the bot to reject spoofed webhook requests:
+
+1. In the Vonage dashboard, go to **Account Settings**
+2. Under **API Settings**, find **Signature Secret** and generate or copy the secret
+3. Add it to your `.env` as `VONAGE_SIGNATURE_SECRET`
+
+Skip this for now if you just want to get running quickly — you can add it later.
+
+### Step 5 — Configure your `.env` file
+
+Copy the example file:
 
 ```bash
 cp .env.example .env
 ```
 
-Open `.env` and set:
+Open `.env` and fill in your credentials:
 
 ```
-TELNYX_API_KEY=KEY_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-TELNYX_PUBLIC_KEY=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-TELNYX_PHONE_NUMBER=+1xxxxxxxxxx
+VONAGE_API_KEY=xxxxxxxx
+VONAGE_API_SECRET=xxxxxxxxxxxxxxxx
+VONAGE_PHONE_NUMBER=+1xxxxxxxxxx
+VONAGE_SIGNATURE_SECRET=            # leave blank to skip signature checks
 GROQ_API_KEY=gsk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 ```
 
 | Variable | Where to find it |
 |---|---|
-| `TELNYX_API_KEY` | [Telnyx Portal](https://portal.telnyx.com) → API Keys → create a key (starts with `KEY_`) |
-| `TELNYX_PUBLIC_KEY` | Same page → Public Key section |
-| `TELNYX_PHONE_NUMBER` | Portal → Numbers → your number (E.164 format, e.g. `+15551234567`) |
+| `VONAGE_API_KEY` | Vonage dashboard → main page, top section |
+| `VONAGE_API_SECRET` | Same location as API Key |
+| `VONAGE_PHONE_NUMBER` | The number you bought in Step 4b (E.164 format, e.g. `+15551234567`) |
+| `VONAGE_SIGNATURE_SECRET` | Account Settings → API Settings (optional) |
 | `GROQ_API_KEY` | [console.groq.com](https://console.groq.com) → API Keys |
 
-### 4. Set up the bot's persona
+### Step 6 — Set up the bot's persona
 
 Edit `persona.txt` to define who the bot is:
 
@@ -98,13 +138,17 @@ Communicate casually over text — no corporate tone, no markdown formatting.
 Keep replies short and natural since this is SMS, but be personal and genuine.
 ```
 
-Be as detailed as you want — the more specific, the more consistent the bot's personality.
+Be as specific as you want — the more detail, the more consistent the personality. The file is loaded once at startup, so restart the server after editing.
+
+If `persona.txt` is missing, the bot falls back to the default `SYSTEM_PROMPT` in `config.py`.
 
 ---
 
 ## Running Locally (Development)
 
-### Step 1 — Start the server
+Use this for testing before deploying to a server.
+
+### Step 1 — Start the Flask server
 
 ```bash
 python app.py
@@ -113,45 +157,69 @@ python app.py
 You should see:
 ```
 2026-05-30 14:00:01 [PERSONA] Loaded: Your name is Alex...
+ * Running on http://127.0.0.1:5000
 ```
-
-The server runs on port `5000`.
 
 ### Step 2 — Expose it with ngrok
 
-Open a second terminal and run:
+In a second terminal, run:
 
 ```bash
 ngrok http 5000
 ```
 
-Copy the `https://` forwarding URL (e.g. `https://abc123.ngrok.io`).
+Copy the `https://` forwarding URL from the output (e.g. `https://abc123.ngrok-free.app`).
 
-### Step 3 — Wire up Telnyx
+### Step 3 — Set the Vonage webhook URL
 
-1. Go to [Telnyx Portal](https://portal.telnyx.com) → **Messaging** → **Messaging Profiles**
-2. Create a new profile (or open an existing one)
+1. Go to **Build & Manage** → **Numbers** → **Your Numbers** in the Vonage dashboard
+2. Click the gear icon next to your number
 3. Set the **Inbound Webhook URL** to your ngrok URL + `/sms`:
    ```
-   https://abc123.ngrok.io/sms
+   https://abc123.ngrok-free.app/sms
    ```
-4. Leave **Failover Webhook URL** blank
-5. Go to **Numbers** → your number → assign it to this messaging profile
-6. Save
+4. Save
 
-Text your Telnyx number — the bot will reply.
+Text your Vonage number — the bot will reply.
 
-> **Note:** ngrok URLs change every time you restart it. Update the Telnyx webhook URL each session, or use a paid ngrok plan for a fixed URL.
+> **Note:** Free ngrok URLs change every time you restart it. Update the webhook URL in the Vonage dashboard each session, or use a paid ngrok plan for a fixed URL.
 
 ---
 
 ## Deploying to a Homelab / Linux Server
 
-For 24/7 operation, run the bot on a Linux server using gunicorn (already in `requirements.txt`) and a systemd service so it restarts automatically on crashes and reboots.
+For 24/7 operation, run the bot on a Linux server using gunicorn and a systemd service so it restarts automatically on crashes and reboots.
 
-### Step 1 — Edit the service file
+### Step 1 — Copy the project to your server
 
-Open `sms-chatbot.service` and replace both instances of `/path/to/sms-chatbot` with your actual path (e.g. `/home/youruser/sms-chatbot`). Also verify gunicorn's path:
+```bash
+scp -r sms-chatbot/ youruser@yourserver:~/sms-chatbot
+```
+
+Or clone it directly on the server:
+
+```bash
+git clone https://github.com/taddiemason/sms-chatbot.git
+cd sms-chatbot
+pip install -r requirements.txt
+cp .env.example .env
+# edit .env with your credentials
+```
+
+### Step 2 — Edit the service file
+
+Open `sms-chatbot.service` and replace both instances of `/path/to/sms-chatbot` with the actual path on your server (e.g. `/home/youruser/sms-chatbot`):
+
+```ini
+WorkingDirectory=/home/youruser/sms-chatbot
+EnvironmentFile=/home/youruser/sms-chatbot/.env
+ExecStart=/usr/bin/gunicorn app:app --workers 1 --threads 4 --bind 0.0.0.0:5000
+...
+StandardOutput=append:/home/youruser/sms-chatbot/logs/service.log
+StandardError=append:/home/youruser/sms-chatbot/logs/service.log
+```
+
+Verify the gunicorn path matches your system:
 
 ```bash
 which gunicorn
@@ -159,45 +227,47 @@ which gunicorn
 
 Update `ExecStart` if the path differs from `/usr/bin/gunicorn`.
 
-### Step 2 — Install and start the service
+### Step 3 — Install and enable the service
 
 ```bash
 sudo cp sms-chatbot.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable sms-chatbot   # auto-start on boot
+sudo systemctl enable sms-chatbot   # start automatically on boot
 sudo systemctl start sms-chatbot
 sudo systemctl status sms-chatbot   # verify it's running
 ```
 
-### Step 3 — Get a public HTTPS URL
+### Step 4 — Get a stable public HTTPS URL
 
-The bot needs a stable public HTTPS URL for Telnyx to reach it. Two options:
+The bot needs a public HTTPS URL so Vonage can reach it. Two options:
 
 **Option A — Cloudflare Tunnel (recommended)**
-Free, gives a stable URL tied to your own domain, no port forwarding or SSL certificates needed. Requires a domain pointed at Cloudflare.
+
+Free, gives a stable URL on your own domain, no port forwarding or SSL certs required. Requires a domain pointed at Cloudflare.
 
 ```bash
 # Install cloudflared on the server
 curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o cloudflared
 chmod +x cloudflared && sudo mv cloudflared /usr/local/bin/
 
-# Authenticate, create tunnel, and route your domain
+# Authenticate and create the tunnel
 cloudflared tunnel login
 cloudflared tunnel create sms-chatbot
 cloudflared tunnel route dns sms-chatbot yourdomain.com
 
-# Run as a systemd service so it starts on boot
+# Install as a systemd service so it runs on boot
 sudo cloudflared service install
 ```
 
-Telnyx webhook URL: `https://yourdomain.com/sms`
+Your webhook URL will be: `https://yourdomain.com/sms`
 
 **Option B — ngrok on the server**
-Simpler if you don't have a domain. Install ngrok on the server and run it there instead of your local machine. Free tier changes URL on restart; a paid plan gives a fixed URL.
 
-### Step 4 — Update Telnyx webhook URL
+Simpler if you don't have a domain. Install ngrok on the server and run it there. The free tier changes the URL on restart; a paid plan gives a fixed URL.
 
-In the Telnyx Portal → Messaging Profiles → set the Inbound Webhook URL to your public URL + `/sms`, then save.
+### Step 5 — Update the Vonage webhook URL
+
+Go to **Build & Manage** → **Numbers** → **Your Numbers** in the Vonage dashboard, click the gear icon, and set the **Inbound Webhook URL** to your stable public URL + `/sms`. Save.
 
 ---
 
@@ -205,13 +275,11 @@ In the Telnyx Portal → Messaging Profiles → set the Inbound Webhook URL to y
 
 ### Bot persona — `persona.txt`
 
-This file defines who the bot is. Edit it freely — it's loaded once when the server starts, so restart after making changes.
-
-If `persona.txt` is missing, the bot falls back to `SYSTEM_PROMPT` in `config.py`.
+Defines who the bot is. Loaded once at startup — restart the server after editing.
 
 ### Contact files — `contacts/<number>.txt`
 
-The bot automatically creates and updates a file for each person it talks to. After every exchange, a fast AI call extracts any new facts and appends them:
+After every exchange, the bot automatically extracts facts from the conversation and saves them:
 
 ```
 - Name: Jordan
@@ -220,41 +288,9 @@ The bot automatically creates and updates a file for each person it talks to. Af
 - Going on vacation to Mexico in June
 ```
 
-You can also edit these files manually — changes take effect on the next incoming message without restarting the server. The `contacts/` folder is gitignored so personal info never gets committed.
+You can also edit these files manually — changes take effect on the next incoming message without restarting. The `contacts/` folder is gitignored so personal info never gets committed.
 
 Set `AUTO_UPDATE_CONTACTS = False` in `config.py` to disable automatic learning.
-
----
-
-## Conversation Logs
-
-All messages are logged to `logs/chat.log` while the server is running:
-
-```
-2026-05-30 14:02:11 [IN]   +15551234567: hey whats up
-2026-05-30 14:02:14 [OUT]  +15551234567 in 3.2s: Not much, just hanging. What's going on?
-2026-05-30 14:02:17 [SENT] +15551234567: Not much, just hanging. What's going on?
-2026-05-30 14:02:18 [PROFILE] Updated contact for +15551234567: - Name: Jordan
-```
-
-Logs rotate daily. Old files are saved as `logs/chat.log.2026-05-29` and kept for 30 days. The `logs/` folder is gitignored.
-
-To follow logs in real time on the server:
-```bash
-tail -f logs/chat.log
-```
-
----
-
-## Usage
-
-### Normal conversation
-
-Text the Telnyx number. The bot replies based on the persona and remembers the conversation.
-
-### Reset history
-
-Text `reset` (case-insensitive) to wipe your conversation history and start fresh.
 
 ---
 
@@ -269,14 +305,15 @@ All settings live in `config.py`. Restart the server after making changes.
 | `GROQ_MODEL` | `llama-3.3-70b-versatile` | Model used for replies |
 | `MAX_TOKENS` | `300` | Max reply length (~225 words) |
 
-Available models:
+Available Groq models:
+
 | Model | Speed | Notes |
 |---|---|---|
 | `llama-3.3-70b-versatile` | Fast | Default — best quality/speed balance |
 | `llama-3.1-8b-instant` | Very fast | Good for simple conversations |
 | `mixtral-8x7b-32768` | Fast | Larger context window |
 
-### Memory
+### Conversation Memory
 
 | Setting | Default | Description |
 |---|---|---|
@@ -287,7 +324,7 @@ Available models:
 
 | Setting | Default | Description |
 |---|---|---|
-| `AUTO_UPDATE_CONTACTS` | `True` | Whether to auto-extract facts into contact files |
+| `AUTO_UPDATE_CONTACTS` | `True` | Auto-extract facts into contact files after each exchange |
 | `CONTACTS_DIR` | `"contacts"` | Folder where contact files are stored |
 
 ### Number Filter
@@ -297,6 +334,7 @@ ALLOWED_NUMBERS = set()  # empty = respond to everyone
 ```
 
 To restrict to specific numbers:
+
 ```python
 ALLOWED_NUMBERS = {"+15551234567", "+15559876543"}
 ```
@@ -307,24 +345,111 @@ ALLOWED_NUMBERS = {"+15551234567", "+15559876543"}
 |---|---|---|
 | `TYPING_SPEED_WPM` | `40` | Words per minute (human avg: 38–45) |
 | `TYPING_JITTER_FRACTION` | `0.3` | ±30% random variation |
-| `TYPING_DELAY_MIN` | `1.0` | Minimum delay in seconds |
-| `TYPING_DELAY_MAX` | `15.0` | Maximum delay in seconds |
+| `TYPING_DELAY_MIN` | `1.0` | Minimum seconds before sending |
+| `TYPING_DELAY_MAX` | `15.0` | Maximum seconds before sending |
+
+---
+
+## Usage Commands
+
+### Conversation
+
+| Action | How |
+|---|---|
+| Start chatting | Text your Vonage number — the bot replies automatically |
+| Reset history | Text `reset` (case-insensitive) to wipe your conversation and start fresh |
+
+### Viewing logs
+
+Follow the conversation log in real time:
+
+```bash
+tail -f logs/chat.log
+```
+
+View the last 50 log lines:
+
+```bash
+tail -n 50 logs/chat.log
+```
+
+Search for a specific number's messages:
+
+```bash
+grep "+15551234567" logs/chat.log
+```
+
+View service-level logs (gunicorn startup, crashes, errors):
+
+```bash
+tail -f logs/service.log
+```
+
+Stream systemd journal output (alternative to the log file):
+
+```bash
+journalctl -u sms-chatbot -f
+```
+
+### Managing the service (Linux/systemd)
+
+```bash
+sudo systemctl status sms-chatbot    # check if it's running
+sudo systemctl start sms-chatbot     # start the bot
+sudo systemctl stop sms-chatbot      # stop the bot
+sudo systemctl restart sms-chatbot   # restart (e.g. after editing config.py or persona.txt)
+sudo systemctl disable sms-chatbot   # stop it from starting on boot
+```
+
+### Reloading the persona
+
+The persona is loaded at startup, so after editing `persona.txt`:
+
+```bash
+sudo systemctl restart sms-chatbot
+```
+
+Or if running locally:
+
+```bash
+# Stop the running server (Ctrl+C), then:
+python app.py
+```
+
+### Manually sending an SMS
+
+Use `send.py` to fire off a one-off text from the command line:
+
+```bash
+python send.py "+15551234567" "Hello from the bot"
+```
+
+### Editing a contact file
+
+Open any contact file directly to add, correct, or remove facts:
+
+```bash
+nano contacts/+15551234567.txt
+```
+
+Changes take effect on the next incoming message — no restart needed.
 
 ---
 
 ## How It Works
 
 ```
-User texts Telnyx number
+User texts Vonage number
         │
         ▼
-Telnyx sends HTTP POST to /sms webhook (JSON body)
+Vonage sends HTTP POST to /sms webhook (form-encoded body)
         │
         ▼
-Server validates Ed25519 signature (rejects spoofed requests)
+(Optional) Server verifies HMAC signature — rejects spoofed requests
         │
-        ├─ Non-SMS event? → ignore, return 200
         ├─ "reset"? → clear history, send confirmation
+        ├─ Number not in whitelist? → ignore
+        ├─ Empty message? → ignore
         │
         ▼
 Load persona.txt + contacts/<number>.txt → build system prompt
@@ -333,10 +458,10 @@ Load persona.txt + contacts/<number>.txt → build system prompt
 Groq API called with system prompt + conversation history
         │
         ▼
-200 response returned to Telnyx immediately (avoids webhook timeout)
+200 returned to Vonage immediately (avoids webhook timeout)
         │
         ▼
-Background thread: sleep(typing delay) → send SMS via Telnyx REST API
+Background thread: sleep(typing delay) → send SMS via Vonage REST API
         │
         ▼
 Background thread: extract new facts → append to contacts/<number>.txt
@@ -351,5 +476,5 @@ Everything logged to logs/chat.log
 
 - **Never commit `.env`** — it's in `.gitignore` by default
 - **`contacts/` and `logs/` are gitignored** — personal info and conversations stay local
-- **Telnyx Ed25519 validation** is enabled — every webhook cryptographically verified
-- **Number whitelisting** via `ALLOWED_NUMBERS` restricts who can interact with the bot
+- **Set `VONAGE_SIGNATURE_SECRET`** to enable HMAC webhook verification and reject spoofed requests
+- **Use `ALLOWED_NUMBERS`** in `config.py` to restrict which numbers the bot responds to

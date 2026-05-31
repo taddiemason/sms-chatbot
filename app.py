@@ -6,7 +6,7 @@ import threading
 from logging.handlers import TimedRotatingFileHandler
 from dotenv import load_dotenv
 from flask import Flask, request, abort, jsonify
-import telnyx
+import vonage
 from groq import Groq
 
 from config import (
@@ -43,9 +43,13 @@ log.addHandler(_console_handler)
 # ─── App setup ────────────────────────────────────────────────────────────────
 app = Flask(__name__)
 
-telnyx.api_key = os.environ["TELNYX_API_KEY"]
-telnyx.public_key = os.environ["TELNYX_PUBLIC_KEY"]
-telnyx_phone = os.environ["TELNYX_PHONE_NUMBER"]
+vonage_client = vonage.Client(
+    key=os.environ["VONAGE_API_KEY"],
+    secret=os.environ["VONAGE_API_SECRET"],
+    signature_secret=os.environ.get("VONAGE_SIGNATURE_SECRET", ""),
+)
+vonage_sms = vonage.Sms(vonage_client)
+vonage_phone = os.environ["VONAGE_PHONE_NUMBER"].lstrip("+")
 
 groq_client = Groq(api_key=os.environ["GROQ_API_KEY"])
 history = ConversationHistory()
@@ -65,7 +69,11 @@ def _build_system_content(number: str) -> str:
 def _send_and_update(to_number: str, message: str, delay: float,
                      user_message: str, ai_reply: str) -> None:
     time.sleep(delay)
-    telnyx.Message.create(from_=telnyx_phone, to=to_number, text=message)
+    vonage_sms.send_message({
+        "from": vonage_phone,
+        "to": to_number.lstrip("+"),
+        "text": message,
+    })
     log.info(f"[SENT] {to_number}: {message[:80]}{'...' if len(message) > 80 else ''}")
 
     if AUTO_UPDATE_CONTACTS and user_message:
@@ -74,25 +82,17 @@ def _send_and_update(to_number: str, message: str, delay: float,
 
 @app.route("/sms", methods=["POST"])
 def sms_reply():
-    # Validate the request came from Telnyx using Ed25519 signature
-    sig = request.headers.get("telnyx-signature-ed25519", "")
-    ts = request.headers.get("telnyx-timestamp", "")
-    try:
-        telnyx.Webhook.construct_event(request.data, sig, ts)
-    except Exception as e:
-        log.error(f"[WEBHOOK] Signature validation failed: {e} | sig={'present' if sig else 'MISSING'} | ts={'present' if ts else 'MISSING'}")
-        abort(403)
+    # Vonage sends form-encoded POST; fall back to JSON if needed
+    params = request.form.to_dict() if request.form else request.json or {}
 
-    body = request.json
-    event_type = body.get("data", {}).get("event_type", "")
+    # Optional webhook signature verification (requires VONAGE_SIGNATURE_SECRET)
+    if os.environ.get("VONAGE_SIGNATURE_SECRET", ""):
+        if not vonage_client.check_signature(params):
+            log.error("[WEBHOOK] Signature validation failed")
+            abort(403)
 
-    # Telnyx sends multiple event types; only handle inbound SMS
-    if event_type != "message.received":
-        return jsonify({}), 200
-
-    payload = body["data"]["payload"]
-    from_number = payload["from"]["phone_number"]
-    user_message = (payload.get("text") or "").strip()
+    from_number = "+" + params.get("msisdn", "")
+    user_message = (params.get("text") or "").strip()
 
     if ALLOWED_NUMBERS and from_number not in ALLOWED_NUMBERS:
         return jsonify({}), 200
@@ -145,7 +145,7 @@ def sms_reply():
     )
     t.start()
 
-    # Respond to Telnyx immediately — actual SMS sent via REST in background thread
+    # Respond to Vonage immediately — actual SMS sent via REST in background thread
     return jsonify({}), 200
 
 
