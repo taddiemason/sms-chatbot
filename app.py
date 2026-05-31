@@ -70,12 +70,16 @@ def _build_system_content(number: str) -> str:
 def _send_and_update(to_number: str, message: str, delay: float,
                      user_message: str, ai_reply: str) -> None:
     time.sleep(delay)
-    vonage_client.sms.send(SmsMessage(
+    response = vonage_client.sms.send(SmsMessage(
         to=to_number.lstrip("+"),
         from_=vonage_phone,
         text=message,
     ))
-    log.info(f"[SENT] {to_number}: {message[:80]}{'...' if len(message) > 80 else ''}")
+    msg_result = response.messages[0]
+    if msg_result.status != "0":
+        log.error(f"[SEND_ERR] Vonage error for {to_number}: status={msg_result.status} error={msg_result.error_text}")
+    else:
+        log.info(f"[SENT] {to_number}: {message[:80]}{'...' if len(message) > 80 else ''}")
 
     if AUTO_UPDATE_CONTACTS and user_message:
         profiles.update_contact(to_number, user_message, ai_reply, groq_client)
