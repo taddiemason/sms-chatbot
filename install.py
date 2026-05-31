@@ -120,6 +120,7 @@ def setup_ngrok_as_service():
         print(f"  Config file: {CYAN}{config_path}{RESET}")
     else:
         tunnel_block = "\ntunnels:\n  sms-chatbot:\n    proto: http\n    addr: 5000\n"
+        os.makedirs(config_dir, exist_ok=True)
         with open(config_path, "a", encoding="utf-8") as f:
             f.write(tunnel_block)
         ok("Tunnel 'sms-chatbot' added to ngrok config")
