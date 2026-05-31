@@ -73,12 +73,30 @@ def yn(question, default_yes=False):
 def setup_ngrok_as_service():
     """Configure ngrok to survive terminal close by running it as a service."""
 
-    # Locate ngrok's config file
-    if sys.platform == "win32":
-        config_dir = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "ngrok")
-    else:
-        config_dir = os.path.expanduser("~/.config/ngrok")
-    config_path = os.path.join(config_dir, "ngrok.yml")
+    # Locate ngrok's config file.
+    # Snap-installed ngrok reads from ~/snap/ngrok/current/.config/ngrok/ngrok.yml,
+    # not ~/.config/ngrok/ngrok.yml — detect this by asking ngrok itself.
+    def _ngrok_config_path():
+        if sys.platform == "win32":
+            return os.path.join(
+                os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "ngrok", "ngrok.yml"
+            )
+        # Ask ngrok which config files it reads
+        r = subprocess.run(["ngrok", "config", "check"],
+                           capture_output=True, text=True)
+        for line in (r.stdout + r.stderr).splitlines():
+            if "ngrok.yml" in line:
+                # Extract the path from lines like "Valid configuration file at /path/ngrok.yml"
+                # or the error output "Config files read: [/path/ngrok.yml]"
+                import re
+                m = re.search(r'(/[^\s\]]+ngrok\.yml)', line)
+                if m:
+                    return m.group(1)
+        # Fallback to standard XDG path
+        return os.path.expanduser("~/.config/ngrok/ngrok.yml")
+
+    config_path = _ngrok_config_path()
+    config_dir  = os.path.dirname(config_path)
 
     # ── Authtoken ──────────────────────────────────────────────────────────────
     has_token = False

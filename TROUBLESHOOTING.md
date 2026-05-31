@@ -89,10 +89,30 @@ curl -s http://127.0.0.1:4040/api/tunnels | python3 -m json.tool
 ```
 Copy the `https://` URL, append `/sms`, and update the Vonage webhook URL.
 
-**Ngrok service fails to start:**
+**Ngrok service fails to start — "Tunnel 'sms-chatbot' is not defined":**
+If ngrok was installed via snap, it reads config from a different path than the standard one.
+Check which config file ngrok actually uses:
+```bash
+ngrok config check
+# or run any ngrok command and look for "Config files read: [...]"
+```
+Then add the tunnel to that file (replace the path with what ngrok reported):
+```bash
+cat >> ~/snap/ngrok/current/.config/ngrok/ngrok.yml << 'EOF'
+
+tunnels:
+  sms-chatbot:
+    proto: http
+    addr: 5000
+EOF
+sudo systemctl restart ngrok
+```
+
+**Ngrok service fails to start — other errors:**
 Check that the authtoken and tunnel config are saved:
 ```bash
-cat ~/.config/ngrok/ngrok.yml
+cat ~/.config/ngrok/ngrok.yml          # standard install
+cat ~/snap/ngrok/current/.config/ngrok/ngrok.yml  # snap install
 ```
 It should contain `authtoken:` and a `tunnels:` block with `sms-chatbot`. If missing, re-run `python install.py --reconfigure` and choose the ngrok option.
 
