@@ -163,6 +163,9 @@ def setup_ngrok_as_service():
         info(f"To check status:  {CYAN}sudo systemctl status ngrok{RESET}")
 
 errors = []
+venv_python = sys.executable  # overridden to venv python on server path
+
+RECONFIGURE = "--reconfigure" in sys.argv
 
 # ─────────────────────────────────────────────────────────────────────────────
 print(f"\n{BOLD}SMS Chatbot — Setup{RESET}")
@@ -184,6 +187,38 @@ if IS_LOCAL:
     info("Local setup selected — will use ngrok for the public webhook URL")
 else:
     info("Server setup selected — will configure a virtualenv and systemd service")
+
+# ── Re-run detection: skip straight to health check if already configured ─────
+if not RECONFIGURE:
+    env_path_check = os.path.join(HERE, ".env")
+    required_keys  = {"VONAGE_API_KEY", "VONAGE_API_SECRET", "VONAGE_PHONE_NUMBER", "GROQ_API_KEY"}
+    existing_keys  = set()
+    if os.path.isfile(env_path_check):
+        with open(env_path_check, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    k, _, v = line.partition("=")
+                    if v.strip():
+                        existing_keys.add(k.strip())
+
+    venv_ok    = not IS_SERVER or os.path.isdir(os.path.join(HERE, "venv"))
+    env_ok     = required_keys.issubset(existing_keys)
+    persona_ok = os.path.isfile(os.path.join(HERE, "persona.txt"))
+
+    if venv_ok and env_ok and persona_ok:
+        print(f"\n  {GREEN}Looks like setup is already complete — skipping to health check.{RESET}")
+        print(f"  {DIM}Run with --reconfigure to redo all steps.{RESET}")
+        if IS_SERVER:
+            venv_path   = os.path.join(HERE, "venv")
+            venv_python = os.path.join(venv_path, "bin", "python3")
+            if not os.path.isfile(venv_python):
+                venv_python = os.path.join(venv_path, "bin", "python")
+        check_script = os.path.join(HERE, "check_services.py")
+        if os.path.isfile(check_script):
+            print()
+            subprocess.run([venv_python, check_script])
+        sys.exit(0)
 
 # ── Step 1: Python version ────────────────────────────────────────────────────
 section("1  Python version")
@@ -217,6 +252,7 @@ if IS_SERVER:
         ok("venv/ created")
 
     # Use the venv's python -m pip rather than bin/pip — python is always present
+    # Also update module-level venv_python so health check runs inside the venv
     venv_python = os.path.join(venv_path, "bin", "python3")
     if not os.path.isfile(venv_python):
         venv_python = os.path.join(venv_path, "bin", "python")
@@ -434,12 +470,35 @@ else:
 
         ok(f"Configured service file written to {os.path.basename(configured_service)}")
         print()
-        info("Install and enable the service:")
-        print(f"    {CYAN}sudo cp sms-chatbot.service.configured /etc/systemd/system/sms-chatbot.service{RESET}")
-        print(f"    {CYAN}sudo systemctl daemon-reload{RESET}")
-        print(f"    {CYAN}sudo systemctl enable sms-chatbot{RESET}")
-        print(f"    {CYAN}sudo systemctl start sms-chatbot{RESET}")
-        print(f"    {CYAN}sudo systemctl status sms-chatbot{RESET}")
+        if yn("Install and start the sms-chatbot service now? (requires sudo)"):
+            cmds = [
+                ["sudo", "cp", configured_service, "/etc/systemd/system/sms-chatbot.service"],
+                ["sudo", "systemctl", "daemon-reload"],
+                ["sudo", "systemctl", "enable", "sms-chatbot"],
+                ["sudo", "systemctl", "start",  "sms-chatbot"],
+            ]
+            all_ok = True
+            for cmd in cmds:
+                r = subprocess.run(cmd)
+                if r.returncode != 0:
+                    fail(f"Command failed: {' '.join(cmd)}")
+                    all_ok = False
+                    break
+            if all_ok:
+                ok("sms-chatbot service installed and started")
+            else:
+                info("Run these manually to finish:")
+                print(f"    {CYAN}sudo cp sms-chatbot.service.configured /etc/systemd/system/sms-chatbot.service{RESET}")
+                print(f"    {CYAN}sudo systemctl daemon-reload{RESET}")
+                print(f"    {CYAN}sudo systemctl enable sms-chatbot{RESET}")
+                print(f"    {CYAN}sudo systemctl start sms-chatbot{RESET}")
+        else:
+            info("Run these to install the service manually:")
+            print(f"    {CYAN}sudo cp sms-chatbot.service.configured /etc/systemd/system/sms-chatbot.service{RESET}")
+            print(f"    {CYAN}sudo systemctl daemon-reload{RESET}")
+            print(f"    {CYAN}sudo systemctl enable sms-chatbot{RESET}")
+            print(f"    {CYAN}sudo systemctl start sms-chatbot{RESET}")
+            print(f"    {CYAN}sudo systemctl status sms-chatbot{RESET}")
 
 # ── Step 7/8: health check ────────────────────────────────────────────────────
 health_step = "8" if IS_SERVER else "7"
@@ -447,7 +506,7 @@ section(f"{health_step}  Health check")
 check_script = os.path.join(HERE, "check_services.py")
 if os.path.isfile(check_script):
     info("Running check_services.py ...\n")
-    subprocess.run([sys.executable, check_script])
+    subprocess.run([venv_python, check_script])
 else:
     info("check_services.py not found — skipping")
 

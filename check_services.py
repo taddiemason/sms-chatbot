@@ -150,7 +150,17 @@ try:
 except (socket.timeout, ConnectionRefusedError, OSError):
     check("Port 5000", False, "not running — start with: python app.py")
 
-# ── 7. Ngrok tunnel ───────────────────────────────────────────────────────────
+# ── 7. Systemd services (Linux only) ─────────────────────────────────────────
+if sys.platform != "win32" and os.path.isdir("/etc/systemd"):
+    import subprocess as _sp
+    print(f"\n{YELLOW}Systemd services{RESET}")
+    for svc in ("sms-chatbot", "ngrok"):
+        r = _sp.run(["systemctl", "is-active", svc], capture_output=True, text=True)
+        active = r.stdout.strip() == "active"
+        check(f"{svc}", active,
+              "active" if active else f"not running — sudo systemctl start {svc}")
+
+# ── 8. Ngrok tunnel ───────────────────────────────────────────────────────────
 print(f"\n{YELLOW}Ngrok tunnel{RESET}")
 
 import json
