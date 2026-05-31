@@ -58,6 +58,109 @@ def choose(question, options):
             return int(raw) - 1
         print(f"  {RED}  Please enter a number between 1 and {len(options)}.{RESET}")
 
+def yn(question, default_yes=False):
+    """Ask a yes/no question and return bool."""
+    hint = "[Y/n]" if default_yes else "[y/N]"
+    try:
+        raw = input(f"  {CYAN}?{RESET}  {question} {DIM}{hint}{RESET}: ").strip().lower()
+    except (KeyboardInterrupt, EOFError):
+        print("\nSetup cancelled.")
+        sys.exit(0)
+    if not raw:
+        return default_yes
+    return raw in ("y", "yes")
+
+def setup_ngrok_as_service():
+    """Configure ngrok to survive terminal close by running it as a service."""
+
+    # Locate ngrok's config file
+    if sys.platform == "win32":
+        config_dir = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "ngrok")
+    else:
+        config_dir = os.path.expanduser("~/.config/ngrok")
+    config_path = os.path.join(config_dir, "ngrok.yml")
+
+    # ── Authtoken ──────────────────────────────────────────────────────────────
+    has_token = False
+    if os.path.isfile(config_path):
+        with open(config_path, encoding="utf-8") as f:
+            has_token = "authtoken" in f.read()
+
+    if has_token:
+        ok("Ngrok authtoken already configured")
+    else:
+        info("An authtoken is required for ngrok to run as a service.")
+        print(f"  {DIM}Get yours at: https://dashboard.ngrok.com/get-started/your-authtoken{RESET}")
+        token = prompt("Ngrok authtoken")
+        if not token:
+            fail("Authtoken required — skipping ngrok service setup")
+            errors.append("ngrok authtoken missing")
+            return
+        r = subprocess.run(["ngrok", "config", "add-authtoken", token],
+                           capture_output=True, text=True)
+        if r.returncode == 0:
+            ok("Authtoken saved")
+        else:
+            fail("Failed to save authtoken: " + r.stderr.strip()[:80])
+            errors.append("ngrok authtoken")
+            return
+
+    # ── Named tunnel in ngrok config ───────────────────────────────────────────
+    config_text = ""
+    if os.path.isfile(config_path):
+        with open(config_path, encoding="utf-8") as f:
+            config_text = f.read()
+
+    if "sms-chatbot" in config_text:
+        ok("Tunnel 'sms-chatbot' already in ngrok config")
+    elif "tunnels:" in config_text:
+        # A tunnels block exists but doesn't have our tunnel — show what to add
+        info("Add this to your ngrok config manually under the existing tunnels: block:")
+        print(f"\n    {CYAN}  sms-chatbot:\n    proto: http\n    addr: 5000{RESET}\n")
+        print(f"  Config file: {CYAN}{config_path}{RESET}")
+    else:
+        tunnel_block = "\ntunnels:\n  sms-chatbot:\n    proto: http\n    addr: 5000\n"
+        with open(config_path, "a", encoding="utf-8") as f:
+            f.write(tunnel_block)
+        ok("Tunnel 'sms-chatbot' added to ngrok config")
+
+    # ── Service setup ──────────────────────────────────────────────────────────
+    print()
+    if sys.platform == "win32":
+        info("Install ngrok as a Windows service (run the following as Administrator):")
+        print(f"    {CYAN}ngrok service install{RESET}")
+        print(f"    {CYAN}ngrok service start{RESET}")
+        print()
+        info(f"To check status:  {CYAN}ngrok service status{RESET}")
+        info(f"To stop:          {CYAN}ngrok service stop{RESET}")
+    else:
+        ngrok_bin = shutil.which("ngrok") or "/usr/bin/ngrok"
+        user = os.environ.get("USER", "root")
+        service_content = (
+            "[Unit]\n"
+            "Description=Ngrok tunnel for SMS chatbot\n"
+            "After=network.target\n\n"
+            "[Service]\n"
+            f"User={user}\n"
+            f"ExecStart={ngrok_bin} start sms-chatbot\n"
+            "Restart=always\n"
+            "RestartSec=5\n\n"
+            "[Install]\n"
+            "WantedBy=multi-user.target\n"
+        )
+        ngrok_service_path = os.path.join(HERE, "ngrok.service")
+        with open(ngrok_service_path, "w", encoding="utf-8") as f:
+            f.write(service_content)
+        ok(f"ngrok.service written to project directory")
+        print()
+        info("Install the ngrok service:")
+        print(f"    {CYAN}sudo cp ngrok.service /etc/systemd/system/{RESET}")
+        print(f"    {CYAN}sudo systemctl daemon-reload{RESET}")
+        print(f"    {CYAN}sudo systemctl enable ngrok{RESET}")
+        print(f"    {CYAN}sudo systemctl start ngrok{RESET}")
+        print()
+        info(f"To check status:  {CYAN}sudo systemctl status ngrok{RESET}")
+
 errors = []
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -217,6 +320,9 @@ if IS_LOCAL:
     section("6  Ngrok")
     if shutil.which("ngrok"):
         ok("ngrok found in PATH")
+        print()
+        if yn("Set up ngrok to run as a background service so it keeps running after you close the terminal?"):
+            setup_ngrok_as_service()
     else:
         fail("ngrok not found")
         errors.append("ngrok")
@@ -228,9 +334,7 @@ if IS_LOCAL:
             info(f"Install via apt:         {CYAN}sudo apt install ngrok{RESET}")
         info(f"Or download from:        {CYAN}https://ngrok.com/download{RESET}")
         print()
-        info("After installing, authenticate once:")
-        print(f"    {CYAN}ngrok config add-authtoken <your-token>{RESET}")
-        info("Get your token at: https://dashboard.ngrok.com/get-started/your-authtoken")
+        info("After installing, re-run this script to set it up as a background service.")
 
 else:
     section("6  Public URL (for Vonage webhooks)")
@@ -274,18 +378,15 @@ else:
     elif tunnel_choice == 1:
         if shutil.which("ngrok"):
             ok("ngrok found in PATH")
+            print()
+            setup_ngrok_as_service()
         else:
             fail("ngrok not found")
             errors.append("ngrok")
             info(f"Install via snap:   {CYAN}snap install ngrok{RESET}")
             info(f"Or download from:   {CYAN}https://ngrok.com/download{RESET}")
             print()
-            info("After installing, authenticate once:")
-            print(f"    {CYAN}ngrok config add-authtoken <your-token>{RESET}")
-        print()
-        info("Start the tunnel in a separate terminal (or as a service):")
-        print(f"    {CYAN}ngrok http 5000{RESET}")
-        info("Copy the https URL and append /sms for the Vonage webhook URL")
+            info("After installing, re-run this script to finish ngrok service setup.")
     else:
         ok("Skipping tunnel setup — using existing domain/proxy")
         info("Make sure your reverse proxy forwards requests to port 5000")
@@ -347,7 +448,9 @@ else:
 
 if IS_LOCAL:
     print(f"  1.  Start the bot:       {CYAN}python app.py{RESET}")
-    print(f"  2.  Start ngrok:         {CYAN}ngrok http 5000{RESET}")
+    print(f"  2.  Start ngrok:")
+    print(f"        As a service:      {CYAN}ngrok service start{RESET}  (if you set it up above)")
+    print(f"        Or manually:       {CYAN}ngrok http 5000{RESET}")
     print(f"  3.  Copy the https URL ngrok gives you, append {CYAN}/sms{RESET},")
     print(f"      and paste it as the inbound webhook URL in your Vonage dashboard.")
     print(f"  4.  Check everything:    {CYAN}python check_services.py{RESET}")
