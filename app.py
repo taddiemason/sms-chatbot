@@ -6,7 +6,10 @@ import threading
 from logging.handlers import TimedRotatingFileHandler
 from dotenv import load_dotenv
 from flask import Flask, request, abort, jsonify
-import vonage
+import hmac
+import hashlib
+from vonage import Auth, Vonage
+from vonage_sms import SmsMessage
 from groq import Groq
 
 from config import (
@@ -43,12 +46,10 @@ log.addHandler(_console_handler)
 # ─── App setup ────────────────────────────────────────────────────────────────
 app = Flask(__name__)
 
-vonage_client = vonage.Client(
-    key=os.environ["VONAGE_API_KEY"],
-    secret=os.environ["VONAGE_API_SECRET"],
-    signature_secret=os.environ.get("VONAGE_SIGNATURE_SECRET", ""),
-)
-vonage_sms = vonage.Sms(vonage_client)
+vonage_client = Vonage(Auth(
+    api_key=os.environ["VONAGE_API_KEY"],
+    api_secret=os.environ["VONAGE_API_SECRET"],
+))
 vonage_phone = os.environ["VONAGE_PHONE_NUMBER"].lstrip("+")
 
 groq_client = Groq(api_key=os.environ["GROQ_API_KEY"])
@@ -69,11 +70,11 @@ def _build_system_content(number: str) -> str:
 def _send_and_update(to_number: str, message: str, delay: float,
                      user_message: str, ai_reply: str) -> None:
     time.sleep(delay)
-    vonage_sms.send_message({
-        "from": vonage_phone,
-        "to": to_number.lstrip("+"),
-        "text": message,
-    })
+    vonage_client.sms.send(SmsMessage(
+        to=to_number.lstrip("+"),
+        from_=vonage_phone,
+        text=message,
+    ))
     log.info(f"[SENT] {to_number}: {message[:80]}{'...' if len(message) > 80 else ''}")
 
     if AUTO_UPDATE_CONTACTS and user_message:
@@ -86,8 +87,12 @@ def sms_reply():
     params = request.form.to_dict() if request.form else request.json or {}
 
     # Optional webhook signature verification (requires VONAGE_SIGNATURE_SECRET)
-    if os.environ.get("VONAGE_SIGNATURE_SECRET", ""):
-        if not vonage_client.check_signature(params):
+    sig_secret = os.environ.get("VONAGE_SIGNATURE_SECRET", "")
+    if sig_secret:
+        sig = params.pop("sig", "")
+        sorted_str = "&".join(f"{k}={v}" for k, v in sorted(params.items()))
+        expected = hmac.new(sig_secret.encode(), sorted_str.encode(), hashlib.md5).hexdigest()
+        if not hmac.compare_digest(sig.lower(), expected.lower()):
             log.error("[WEBHOOK] Signature validation failed")
             abort(403)
 
