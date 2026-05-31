@@ -2,6 +2,8 @@
 
 An SMS chatbot powered by [Groq](https://console.groq.com) and [Vonage](https://vonage.com). When someone texts your Vonage number, the bot replies using a large language model — with per-sender conversation memory, a fully customizable persona, automatic contact learning, and a human-like typing delay.
 
+Something not working? See [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
+
 ---
 
 ## Features
