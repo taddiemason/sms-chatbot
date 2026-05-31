@@ -43,11 +43,43 @@ def prompt(label, default="", secret=False):
         sys.exit(0)
     return value or default
 
+def choose(question, options):
+    """Present a numbered menu and return the index of the chosen option."""
+    print(f"\n  {BOLD}{question}{RESET}")
+    for i, opt in enumerate(options, 1):
+        print(f"  {CYAN}{i}{RESET}  {opt}")
+    while True:
+        try:
+            raw = input(f"\n  {CYAN}?{RESET}  Enter number: ").strip()
+        except (KeyboardInterrupt, EOFError):
+            print("\nSetup cancelled.")
+            sys.exit(0)
+        if raw.isdigit() and 1 <= int(raw) <= len(options):
+            return int(raw) - 1
+        print(f"  {RED}  Please enter a number between 1 and {len(options)}.{RESET}")
+
 errors = []
 
 # ─────────────────────────────────────────────────────────────────────────────
 print(f"\n{BOLD}SMS Chatbot — Setup{RESET}")
 print(f"{DIM}Installs dependencies and walks through all required configuration.{RESET}")
+
+# ── Environment choice ────────────────────────────────────────────────────────
+env_choice = choose(
+    "Where are you setting this up?",
+    [
+        "Local machine  (development / testing — uses ngrok for the public URL)",
+        "Homelab / Linux server  (production — uses gunicorn + systemd service)",
+    ],
+)
+IS_LOCAL  = env_choice == 0
+IS_SERVER = env_choice == 1
+
+print()
+if IS_LOCAL:
+    info("Local setup selected — will use ngrok for the public webhook URL")
+else:
+    info("Server setup selected — will configure a virtualenv and systemd service")
 
 # ── Step 1: Python version ────────────────────────────────────────────────────
 section("1  Python version")
@@ -57,29 +89,59 @@ if (major, minor) < (3, 8):
     sys.exit(1)
 ok(f"Python {major}.{minor}")
 
-# ── Step 2: pip packages ──────────────────────────────────────────────────────
+# ── Step 2: Python packages ───────────────────────────────────────────────────
 section("2  Python packages")
 req = os.path.join(HERE, "requirements.txt")
 if not os.path.isfile(req):
     fail("requirements.txt not found — are you in the right directory?")
     sys.exit(1)
 
-info("Running pip install -r requirements.txt ...")
-result = subprocess.run(
-    [sys.executable, "-m", "pip", "install", "-r", req, "--quiet"],
-    capture_output=True, text=True,
-)
-if result.returncode != 0:
-    fail("pip install failed:\n" + result.stderr)
-    sys.exit(1)
-ok("All packages installed")
+if IS_SERVER:
+    # Create a venv if one doesn't exist
+    venv_path = os.path.join(HERE, "venv")
+    if os.path.isdir(venv_path):
+        ok("venv/ already exists")
+    else:
+        info("Creating virtual environment (venv/) ...")
+        result = subprocess.run(
+            [sys.executable, "-m", "venv", venv_path],
+            capture_output=True, text=True,
+        )
+        if result.returncode != 0:
+            fail("Failed to create venv:\n" + result.stderr)
+            sys.exit(1)
+        ok("venv/ created")
+
+    venv_pip = os.path.join(venv_path, "bin", "pip")
+    if not os.path.isfile(venv_pip):
+        venv_pip = os.path.join(venv_path, "Scripts", "pip")  # fallback for Windows-in-server case
+
+    info("Installing packages into venv ...")
+    result = subprocess.run(
+        [venv_pip, "install", "-r", req, "--quiet"],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        fail("pip install failed:\n" + result.stderr)
+        sys.exit(1)
+    ok("All packages installed into venv")
+
+else:
+    info("Running pip install -r requirements.txt ...")
+    result = subprocess.run(
+        [sys.executable, "-m", "pip", "install", "-r", req, "--quiet"],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        fail("pip install failed:\n" + result.stderr)
+        sys.exit(1)
+    ok("All packages installed")
 
 # ── Step 3: .env file ─────────────────────────────────────────────────────────
 section("3  Environment variables  (.env)")
 
 env_path = os.path.join(HERE, ".env")
 
-# Load whatever is already in .env
 existing = {}
 if os.path.isfile(env_path):
     with open(env_path, encoding="utf-8") as f:
@@ -150,27 +212,125 @@ for d in ("contacts", "logs"):
     os.makedirs(path, exist_ok=True)
     ok(f"{d}/  {'already exists' if existed else 'created'}")
 
-# ── Step 6: ngrok ─────────────────────────────────────────────────────────────
-section("6  Ngrok")
-if shutil.which("ngrok"):
-    ok("ngrok found in PATH")
-else:
-    fail("ngrok not found")
-    errors.append("ngrok")
-    if sys.platform == "win32":
-        info(f"Install via winget:      {CYAN}winget install ngrok.ngrok{RESET}")
-        info(f"Install via Chocolatey:  {CYAN}choco install ngrok{RESET}")
+# ── Step 6: tunnel / public URL ───────────────────────────────────────────────
+if IS_LOCAL:
+    section("6  Ngrok")
+    if shutil.which("ngrok"):
+        ok("ngrok found in PATH")
     else:
-        info(f"Install via snap:        {CYAN}snap install ngrok{RESET}")
-        info(f"Install via apt:         {CYAN}sudo apt install ngrok{RESET}")
-    info(f"Or download from:        {CYAN}https://ngrok.com/download{RESET}")
-    print()
-    info("After installing, authenticate once:")
-    print(f"    {CYAN}ngrok config add-authtoken <your-token>{RESET}")
-    info("Get your token at: https://dashboard.ngrok.com/get-started/your-authtoken")
+        fail("ngrok not found")
+        errors.append("ngrok")
+        if sys.platform == "win32":
+            info(f"Install via winget:      {CYAN}winget install ngrok.ngrok{RESET}")
+            info(f"Install via Chocolatey:  {CYAN}choco install ngrok{RESET}")
+        else:
+            info(f"Install via snap:        {CYAN}snap install ngrok{RESET}")
+            info(f"Install via apt:         {CYAN}sudo apt install ngrok{RESET}")
+        info(f"Or download from:        {CYAN}https://ngrok.com/download{RESET}")
+        print()
+        info("After installing, authenticate once:")
+        print(f"    {CYAN}ngrok config add-authtoken <your-token>{RESET}")
+        info("Get your token at: https://dashboard.ngrok.com/get-started/your-authtoken")
 
-# ── Step 7: run health check ──────────────────────────────────────────────────
-section("7  Health check")
+else:
+    section("6  Public URL (for Vonage webhooks)")
+    info("Your server needs a stable public HTTPS URL so Vonage can reach it.")
+    print()
+    tunnel_choice = choose(
+        "Which tunneling method will you use?",
+        [
+            "Cloudflare Tunnel  (recommended — free, stable domain, requires a domain on Cloudflare)",
+            "Ngrok on the server  (simpler — free tier changes URL on restart)",
+            "I already have a domain / reverse proxy set up",
+        ],
+    )
+
+    if tunnel_choice == 0:
+        print(f"""
+  {BOLD}Cloudflare Tunnel setup:{RESET}
+
+  {DIM}Install cloudflared:{RESET}
+    {CYAN}curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o cloudflared{RESET}
+    {CYAN}chmod +x cloudflared && sudo mv cloudflared /usr/local/bin/{RESET}
+
+  {DIM}Authenticate and create the tunnel:{RESET}
+    {CYAN}cloudflared tunnel login{RESET}
+    {CYAN}cloudflared tunnel create sms-chatbot{RESET}
+
+  {DIM}Create ~/.cloudflared/config.yml with:{RESET}
+    tunnel: <YOUR-TUNNEL-UUID>
+    credentials-file: /home/<user>/.cloudflared/<YOUR-TUNNEL-UUID>.json
+    ingress:
+      - hostname: yourdomain.com
+        service: http://localhost:5000
+      - service: http_status:404
+
+  {DIM}Route and install as a service:{RESET}
+    {CYAN}cloudflared tunnel route dns sms-chatbot yourdomain.com{RESET}
+    {CYAN}sudo cloudflared service install{RESET}
+
+  Your webhook URL will be: {CYAN}https://yourdomain.com/sms{RESET}
+""")
+    elif tunnel_choice == 1:
+        if shutil.which("ngrok"):
+            ok("ngrok found in PATH")
+        else:
+            fail("ngrok not found")
+            errors.append("ngrok")
+            info(f"Install via snap:   {CYAN}snap install ngrok{RESET}")
+            info(f"Or download from:   {CYAN}https://ngrok.com/download{RESET}")
+            print()
+            info("After installing, authenticate once:")
+            print(f"    {CYAN}ngrok config add-authtoken <your-token>{RESET}")
+        print()
+        info("Start the tunnel in a separate terminal (or as a service):")
+        print(f"    {CYAN}ngrok http 5000{RESET}")
+        info("Copy the https URL and append /sms for the Vonage webhook URL")
+    else:
+        ok("Skipping tunnel setup — using existing domain/proxy")
+        info("Make sure your reverse proxy forwards requests to port 5000")
+
+    # ── Step 7: systemd service ───────────────────────────────────────────────
+    section("7  Systemd service")
+    service_src = os.path.join(HERE, "sms-chatbot.service")
+
+    if not os.path.isfile(service_src):
+        fail("sms-chatbot.service not found — skipping service setup")
+        errors.append("sms-chatbot.service missing")
+    else:
+        # Detect the install path and venv gunicorn path to fill into the service file
+        venv_gunicorn = os.path.join(HERE, "venv", "bin", "gunicorn")
+        print()
+        info("The service file needs to know where the project lives on this server.")
+        info(f"Detected path: {CYAN}{HERE}{RESET}")
+        confirmed_path = prompt("Project path", default=HERE)
+        confirmed_path = confirmed_path.rstrip("/")
+
+        with open(service_src, encoding="utf-8") as f:
+            service_content = f.read()
+
+        venv_gunicorn_final = os.path.join(confirmed_path, "venv", "bin", "gunicorn")
+        service_content = service_content.replace("/path/to/sms-chatbot", confirmed_path)
+        service_content = service_content.replace(
+            "/home/youruser/sms-chatbot/venv/bin/gunicorn", venv_gunicorn_final
+        )
+
+        configured_service = os.path.join(HERE, "sms-chatbot.service.configured")
+        with open(configured_service, "w", encoding="utf-8") as f:
+            f.write(service_content)
+
+        ok(f"Configured service file written to {os.path.basename(configured_service)}")
+        print()
+        info("Install and enable the service:")
+        print(f"    {CYAN}sudo cp sms-chatbot.service.configured /etc/systemd/system/sms-chatbot.service{RESET}")
+        print(f"    {CYAN}sudo systemctl daemon-reload{RESET}")
+        print(f"    {CYAN}sudo systemctl enable sms-chatbot{RESET}")
+        print(f"    {CYAN}sudo systemctl start sms-chatbot{RESET}")
+        print(f"    {CYAN}sudo systemctl status sms-chatbot{RESET}")
+
+# ── Step 7/8: health check ────────────────────────────────────────────────────
+health_step = "8" if IS_SERVER else "7"
+section(f"{health_step}  Health check")
 check_script = os.path.join(HERE, "check_services.py")
 if os.path.isfile(check_script):
     info("Running check_services.py ...\n")
@@ -185,9 +345,15 @@ if errors:
 else:
     print(f"{BOLD}Setup complete!{RESET}  Next steps:\n")
 
-print(f"  1.  Start the bot:       {CYAN}python app.py{RESET}")
-print(f"  2.  Start ngrok:         {CYAN}ngrok http 5000{RESET}")
-print(f"  3.  Copy the https URL ngrok gives you, append {CYAN}/sms{RESET},")
-print(f"      and paste it as the inbound webhook URL in your Vonage dashboard.")
-print(f"  4.  Check everything:    {CYAN}python check_services.py{RESET}")
+if IS_LOCAL:
+    print(f"  1.  Start the bot:       {CYAN}python app.py{RESET}")
+    print(f"  2.  Start ngrok:         {CYAN}ngrok http 5000{RESET}")
+    print(f"  3.  Copy the https URL ngrok gives you, append {CYAN}/sms{RESET},")
+    print(f"      and paste it as the inbound webhook URL in your Vonage dashboard.")
+    print(f"  4.  Check everything:    {CYAN}python check_services.py{RESET}")
+else:
+    print(f"  1.  Install the service (commands printed above)")
+    print(f"  2.  Start the service:   {CYAN}sudo systemctl start sms-chatbot{RESET}")
+    print(f"  3.  Set the Vonage inbound webhook URL to your public URL + {CYAN}/sms{RESET}")
+    print(f"  4.  Check everything:    {CYAN}python check_services.py{RESET}")
 print()
