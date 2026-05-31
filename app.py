@@ -96,7 +96,8 @@ def sms_reply():
             log.error("[WEBHOOK] Signature validation failed")
             abort(403)
 
-    from_number = "+" + params.get("msisdn", "")
+    raw_from = params.get("msisdn") or params.get("from", "")
+    from_number = "+" + raw_from.lstrip("+")
     user_message = (params.get("text") or "").strip()
 
     if ALLOWED_NUMBERS and from_number not in ALLOWED_NUMBERS:
