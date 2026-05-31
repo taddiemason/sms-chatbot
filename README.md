@@ -49,6 +49,8 @@ sms-chatbot/
 After cloning, run the setup script — it installs dependencies, walks you through entering credentials, creates `persona.txt` if missing, and runs the health check at the end:
 
 ```bash
+python3 -m venv venv
+source venv/bin/activate
 python install.py
 ```
 
