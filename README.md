@@ -211,31 +211,32 @@ Or clone it directly on the server:
 ```bash
 git clone https://github.com/taddiemason/sms-chatbot.git
 cd sms-chatbot
+python3 -m venv venv
+source venv/bin/activate
 pip install -r requirements.txt
+mkdir -p logs
 cp .env.example .env
 # edit .env with your credentials
 ```
 
 ### Step 2 — Edit the service file
 
-Open `sms-chatbot.service` and replace both instances of `/path/to/sms-chatbot` with the actual path on your server (e.g. `/home/youruser/sms-chatbot`):
+Open `sms-chatbot.service` and replace all instances of `/home/youruser/sms-chatbot` with your actual path. Make sure `ExecStart` points to the **venv's gunicorn**, not the system one — the system Python won't have the dependencies:
 
 ```ini
 WorkingDirectory=/home/youruser/sms-chatbot
 EnvironmentFile=/home/youruser/sms-chatbot/.env
-ExecStart=/usr/bin/gunicorn app:app --workers 1 --threads 4 --bind 0.0.0.0:5000
-...
+ExecStart=/home/youruser/sms-chatbot/venv/bin/gunicorn app:app --workers 1 --threads 4 --bind 0.0.0.0:5000
+Restart=always
+RestartSec=5
 StandardOutput=append:/home/youruser/sms-chatbot/logs/service.log
 StandardError=append:/home/youruser/sms-chatbot/logs/service.log
 ```
 
-Verify the gunicorn path matches your system:
-
-```bash
-which gunicorn
-```
-
-Update `ExecStart` if the path differs from `/usr/bin/gunicorn`.
+> **Tip:** If the service starts but `logs/chat.log` stays empty, check for startup errors with:
+> ```bash
+> sudo journalctl -u sms-chatbot -n 50
+> ```
 
 ### Step 3 — Install and enable the service
 

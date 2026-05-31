@@ -5,7 +5,7 @@ After=network.target
 [Service]
 WorkingDirectory=/path/to/sms-chatbot
 EnvironmentFile=/path/to/sms-chatbot/.env
-ExecStart=/usr/bin/gunicorn app:app --workers 1 --threads 4 --bind 0.0.0.0:5000
+ExecStart=/home/youruser/sms-chatbot/venv/bin/gunicorn app:app --workers 1 --threads 4 --bind 0.0.0.0:5000
 Restart=always
 RestartSec=5
 StandardOutput=append:/path/to/sms-chatbot/logs/service.log
