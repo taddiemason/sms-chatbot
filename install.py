@@ -308,13 +308,21 @@ else:
     ok("persona.txt created")
     info(f"Edit {CYAN}persona.txt{RESET} to give the bot its personality")
 
-# ── Step 5: directories ───────────────────────────────────────────────────────
+# ── Step 5: directories & log files ──────────────────────────────────────────
 section("5  Directories")
 for d in ("contacts", "logs"):
     path = os.path.join(HERE, d)
     existed = os.path.isdir(path)
     os.makedirs(path, exist_ok=True)
     ok(f"{d}/  {'already exists' if existed else 'created'}")
+
+for log_file in ("logs/chat.log", "logs/service.log"):
+    log_path = os.path.join(HERE, log_file)
+    if os.path.isfile(log_path):
+        ok(f"{log_file}  already exists")
+    else:
+        open(log_path, "w").close()
+        ok(f"{log_file}  created")
 
 # ── Step 6: tunnel / public URL ───────────────────────────────────────────────
 if IS_LOCAL:
