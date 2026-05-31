@@ -216,13 +216,16 @@ if IS_SERVER:
             sys.exit(1)
         ok("venv/ created")
 
-    venv_pip = os.path.join(venv_path, "bin", "pip")
-    if not os.path.isfile(venv_pip):
-        venv_pip = os.path.join(venv_path, "Scripts", "pip")  # fallback for Windows-in-server case
+    # Use the venv's python -m pip rather than bin/pip — python is always present
+    venv_python = os.path.join(venv_path, "bin", "python3")
+    if not os.path.isfile(venv_python):
+        venv_python = os.path.join(venv_path, "bin", "python")
+    if not os.path.isfile(venv_python):
+        venv_python = os.path.join(venv_path, "Scripts", "python.exe")  # Windows fallback
 
     info("Installing packages into venv ...")
     result = subprocess.run(
-        [venv_pip, "install", "-r", req, "--quiet"],
+        [venv_python, "-m", "pip", "install", "-r", req, "--quiet"],
         capture_output=True, text=True,
     )
     if result.returncode != 0:
