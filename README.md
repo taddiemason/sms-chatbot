@@ -52,7 +52,17 @@ cd sms-chatbot
 ### Step 2 — Install dependencies
 
 ```bash
+python3 -m venv venv
+source venv/bin/activate
 pip install -r requirements.txt
+```
+
+### Step 2b — Create the logs directory
+
+The bot writes conversation logs here — create it before starting the server:
+
+```bash
+mkdir -p logs
 ```
 
 ### Step 3 — Get a Groq API key
@@ -253,6 +263,31 @@ chmod +x cloudflared && sudo mv cloudflared /usr/local/bin/
 # Authenticate and create the tunnel
 cloudflared tunnel login
 cloudflared tunnel create sms-chatbot
+```
+
+Copy the tunnel UUID from the output — you'll need it in the config file.
+
+```bash
+# Create the config directory and file
+mkdir -p ~/.cloudflared
+nano ~/.cloudflared/config.yml
+```
+
+Paste the following into the file, replacing the tunnel UUID and your domain:
+
+```yaml
+tunnel: YOUR-TUNNEL-UUID
+credentials-file: /home/youruser/.cloudflared/YOUR-TUNNEL-UUID.json
+
+ingress:
+  - hostname: yourdomain.com
+    service: http://localhost:5000
+  - service: http_status:404
+```
+
+Save and exit (`Ctrl+X`, then `Y`, then `Enter`), then route your domain and install the service:
+
+```bash
 cloudflared tunnel route dns sms-chatbot yourdomain.com
 
 # Install as a systemd service so it runs on boot
