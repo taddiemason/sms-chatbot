@@ -3,6 +3,7 @@ import time
 import random
 import logging
 import threading
+from datetime import datetime
 from logging.handlers import TimedRotatingFileHandler
 from dotenv import load_dotenv
 from flask import Flask, request, abort, jsonify
@@ -65,6 +66,7 @@ def _build_system_content(number: str) -> str:
     content = BOT_PERSONA
     if contact:
         content += f"\n\nWhat you know about this person:\n{contact}"
+    content += f"\n\nCurrent date and time: {datetime.now().strftime('%A, %B %d, %Y at %I:%M %p')}"
     return content
 
 
@@ -80,7 +82,7 @@ def _send_and_update(to_number: str, message: str, delay: float,
     if msg_result.status != "0":
         log.error(f"[SEND_ERR] Vonage error for {to_number}: status={msg_result.status} error={msg_result.error_text}")
     else:
-        log.info(f"[SENT] {to_number}: {message[:80]}{'...' if len(message) > 80 else ''}")
+        log.info(f"[SENT] {to_number}: {message}")
 
     if AUTO_UPDATE_CONTACTS and user_message:
         profiles.update_contact(to_number, user_message, ai_reply, groq_client)
@@ -150,7 +152,7 @@ def sms_reply():
         busy_extra = random.uniform(BUSY_DELAY_MIN, BUSY_DELAY_MAX)
         delay += busy_extra
         log.info(f"[BUSY] {from_number} adding {busy_extra:.0f}s busy delay")
-    log.info(f"[OUT]  {from_number} in {delay:.1f}s: {ai_reply[:80]}{'...' if len(ai_reply) > 80 else ''}")
+    log.info(f"[OUT]  {from_number} in {delay:.1f}s: {ai_reply}")
 
     # Send after delay in background; also runs contact auto-update after sending
     t = threading.Thread(
