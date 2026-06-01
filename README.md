@@ -48,15 +48,30 @@ sms-chatbot/
 
 ### Automated setup (recommended)
 
-After cloning, run the setup script — it installs dependencies, walks you through entering credentials, creates `persona.txt` if missing, and runs the health check at the end:
+After cloning, run the setup script:
 
 ```bash
-python3 -m venv venv
-source venv/bin/activate
-python install.py
+python3 install.py
 ```
 
-Re-running it is safe; it only prompts for values that are missing from `.env`.
+The installer walks you through every step with a progress counter (Step X of 8 for local, Step X of 9 for server):
+
+- **Asks where you're setting up** — local machine (ngrok) or Linux server (gunicorn + systemd)
+- **Installs dependencies** — creates and uses a virtualenv automatically for server setups
+- **Guides credential entry** with validation on every field:
+  - Vonage API key — checks 8-character alphanumeric format
+  - Vonage API secret — checks minimum length
+  - Vonage phone number — checks E.164 format (e.g. `+15551234567`)
+  - Groq API key — checks `gsk_` prefix, then makes a live API call to confirm it works
+  - Vonage key + secret validated together via a live API call — shows your account balance on success
+  - Includes sign-up links if you don't have a Vonage or Groq account yet
+  - If a field is wrong, shows the specific error and offers to retry before moving on
+- **Interactive persona setup** — optionally set the bot's name, age, occupation, and personality right in the terminal
+- **Vonage webhook guidance** — dedicated step with click-by-click instructions for pasting the webhook URL into the Vonage dashboard (the step most users get stuck on)
+- **Health check** — verifies all services are reachable before finishing
+- **Specific fix commands** printed for anything that fails
+
+Re-running is safe — it skips values already set in `.env`. To redo all steps: `python install.py --reconfigure`
 
 The manual steps below cover the same ground in detail if you prefer to set things up yourself or want to understand what the script does.
 
@@ -109,17 +124,17 @@ The free tier is generous enough to run this bot without paying anything.
 
 #### 4c. Configure the inbound webhook
 
-This is how Vonage tells your bot when a text message arrives.
+This is how Vonage tells your bot when a text message arrives. If you used `install.py`, it walks you through this step with click-by-click instructions once your public URL is known. For manual setup:
 
 1. Go to **Build & Manage** → **Numbers** → **Your Numbers**
-2. Click the gear icon next to your number
-3. Under **SMS**, set the **Inbound Webhook URL** to:
+2. Click the gear icon (⚙) next to your number
+3. Under **Messages**, set the **Inbound Webhook URL** to:
    ```
    https://yourdomain.com/sms
    ```
    (You'll get this URL in later steps — come back and fill it in once you have it)
-4. Set the **HTTP Method** to `POST-Form`
-5. Click **Save**
+4. Set the **HTTP Method** to `POST`
+5. Click **Save changes**
 
 #### 4d. (Optional) Enable webhook signature verification
 
@@ -159,7 +174,7 @@ GROQ_API_KEY=gsk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 
 ### Step 6 — Set up the bot's persona
 
-Edit `persona.txt` to define who the bot is:
+If you used `install.py`, you were offered the option to customize the persona interactively (name, age, occupation, personality). If you chose the default or want to change it, edit `persona.txt` directly:
 
 ```
 Your name is Alex. You are 26 years old and work as a personal assistant.
@@ -169,8 +184,6 @@ Keep replies short and natural since this is SMS, but be personal and genuine.
 ```
 
 Be as specific as you want — the more detail, the more consistent the personality. The file is loaded once at startup, so restart the server after editing.
-
-If `persona.txt` is missing, the bot falls back to the default `SYSTEM_PROMPT` in `config.py`.
 
 ---
 
@@ -202,13 +215,15 @@ Copy the `https://` forwarding URL from the output (e.g. `https://abc123.ngrok-f
 
 ### Step 3 — Set the Vonage webhook URL
 
+If you used `install.py`, run `python check_services.py` to get your live ngrok URL, then follow the on-screen instructions from the installer's webhook step. For manual setup:
+
 1. Go to **Build & Manage** → **Numbers** → **Your Numbers** in the Vonage dashboard
-2. Click the gear icon next to your number
-3. Set the **Inbound Webhook URL** to your ngrok URL + `/sms`:
+2. Click the gear icon (⚙) next to your number
+3. Under **Messages**, set the **Inbound Webhook URL** to your ngrok URL + `/sms`:
    ```
    https://abc123.ngrok-free.app/sms
    ```
-4. Save
+4. Set **HTTP Method** to `POST` and click **Save changes**
 
 Text your Vonage number — the bot will reply.
 
@@ -323,7 +338,15 @@ Simpler if you don't have a domain. Install ngrok on the server and run it there
 
 ### Step 5 — Update the Vonage webhook URL
 
-Go to **Build & Manage** → **Numbers** → **Your Numbers** in the Vonage dashboard, click the gear icon, and set the **Inbound Webhook URL** to your stable public URL + `/sms`. Save.
+If you used `install.py`, it prompted for your domain and printed the exact URL and click-by-click instructions. For manual setup:
+
+1. Go to **Build & Manage** → **Numbers** → **Your Numbers** in the Vonage dashboard
+2. Click the gear icon (⚙) next to your number
+3. Under **Messages**, set **Inbound Webhook URL** to your public domain + `/sms`:
+   ```
+   https://yourdomain.com/sms
+   ```
+4. Set **HTTP Method** to `POST` and click **Save changes**
 
 ---
 
