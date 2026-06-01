@@ -15,6 +15,7 @@ from groq import Groq
 from config import (
     SYSTEM_PROMPT, GROQ_MODEL, ALLOWED_NUMBERS, MAX_TOKENS,
     TYPING_SPEED_WPM, TYPING_JITTER_FRACTION, TYPING_DELAY_MIN, TYPING_DELAY_MAX,
+    BUSY_DELAY_CHANCE, BUSY_DELAY_MIN, BUSY_DELAY_MAX,
     AUTO_UPDATE_CONTACTS, LOGS_DIR,
 )
 from conversation import ConversationHistory
@@ -145,6 +146,10 @@ def sms_reply():
     delay = (word_count / TYPING_SPEED_WPM) * 60
     jitter = delay * TYPING_JITTER_FRACTION * random.uniform(-1, 1)
     delay = max(TYPING_DELAY_MIN, min(TYPING_DELAY_MAX, delay + jitter))
+    if random.random() < BUSY_DELAY_CHANCE:
+        busy_extra = random.uniform(BUSY_DELAY_MIN, BUSY_DELAY_MAX)
+        delay += busy_extra
+        log.info(f"[BUSY] {from_number} adding {busy_extra:.0f}s busy delay")
     log.info(f"[OUT]  {from_number} in {delay:.1f}s: {ai_reply[:80]}{'...' if len(ai_reply) > 80 else ''}")
 
     # Send after delay in background; also runs contact auto-update after sending
