@@ -2,6 +2,7 @@
 """One-time setup script — installs dependencies and walks through configuration."""
 
 import os
+import re
 import sys
 import subprocess
 import shutil
@@ -26,8 +27,14 @@ BOLD   = "\033[1m"
 DIM    = "\033[2m"
 RESET  = "\033[0m"
 
+TOTAL_STEPS = 8  # overridden after IS_LOCAL/IS_SERVER are set
+_step = 0
+
 def section(title):
-    print(f"\n{BOLD}{CYAN}── {title} {'─' * (44 - len(title))}{RESET}")
+    global _step
+    _step += 1
+    label = f"Step {_step} of {TOTAL_STEPS}  {title}"
+    print(f"\n{BOLD}{CYAN}── {label} {'─' * max(1, 44 - len(label))}{RESET}")
 
 def ok(msg):   print(f"  {GREEN}✓{RESET}  {msg}")
 def fail(msg): print(f"  {RED}✗{RESET}  {msg}")
@@ -70,6 +77,38 @@ def yn(question, default_yes=False):
         return default_yes
     return raw in ("y", "yes")
 
+def validate_credential(key, value):
+    """Returns (is_valid: bool, message: str). Called after packages are installed."""
+    if key == "GROQ_API_KEY":
+        if not value.startswith("gsk_"):
+            return False, "Groq API keys must start with 'gsk_'"
+        try:
+            from groq import Groq
+            Groq(api_key=value).models.list()
+            return True, "Groq API key validated"
+        except Exception as e:
+            msg = str(e)
+            if "401" in msg or "auth" in msg.lower() or "invalid" in msg.lower():
+                return False, "Groq rejected this key — check console.groq.com"
+            return True, f"Could not reach Groq to verify (network: {msg[:60]}) — accepted"
+
+    if key == "VONAGE_API_KEY":
+        if not re.fullmatch(r"[a-zA-Z0-9]{8}", value):
+            return False, "Vonage API key must be exactly 8 alphanumeric characters"
+        return True, ""
+
+    if key == "VONAGE_API_SECRET":
+        if len(value) < 16:
+            return False, f"Vonage API secret looks too short ({len(value)} chars, expected ≥16)"
+        return True, ""
+
+    if key == "VONAGE_PHONE_NUMBER":
+        if not re.fullmatch(r'\+\d{10,15}', value):
+            return False, "Must be E.164 format: + followed by 10–15 digits (e.g. +15551234567)"
+        return True, ""
+
+    return True, ""
+
 def setup_ngrok_as_service():
     """Configure ngrok to survive terminal close by running it as a service."""
 
@@ -88,7 +127,6 @@ def setup_ngrok_as_service():
             if "ngrok.yml" in line:
                 # Extract the path from lines like "Valid configuration file at /path/ngrok.yml"
                 # or the error output "Config files read: [/path/ngrok.yml]"
-                import re
                 m = re.search(r'(/[^\s\]]+ngrok\.yml)', line)
                 if m:
                     return m.group(1)
@@ -206,6 +244,8 @@ if IS_LOCAL:
 else:
     info("Server setup selected — will configure a virtualenv and systemd service")
 
+TOTAL_STEPS = 8 if IS_LOCAL else 9
+
 # ── Re-run detection: skip straight to health check if already configured ─────
 if not RECONFIGURE:
     env_path_check = os.path.join(HERE, ".env")
@@ -239,7 +279,7 @@ if not RECONFIGURE:
         sys.exit(0)
 
 # ── Step 1: Python version ────────────────────────────────────────────────────
-section("1  Python version")
+section("Python version")
 major, minor = sys.version_info[:2]
 if (major, minor) < (3, 8):
     fail(f"Python 3.8+ required, found {major}.{minor}")
@@ -247,7 +287,7 @@ if (major, minor) < (3, 8):
 ok(f"Python {major}.{minor}")
 
 # ── Step 2: Python packages ───────────────────────────────────────────────────
-section("2  Python packages")
+section("Python packages")
 req = os.path.join(HERE, "requirements.txt")
 if not os.path.isfile(req):
     fail("requirements.txt not found — are you in the right directory?")
@@ -299,7 +339,7 @@ else:
     ok("All packages installed")
 
 # ── Step 3: .env file ─────────────────────────────────────────────────────────
-section("3  Environment variables  (.env)")
+section("Environment variables  (.env)")
 
 env_path = os.path.join(HERE, ".env")
 
@@ -324,19 +364,63 @@ def collect(key, label, required=True):
         return
     while True:
         val = prompt(label, secret=not required)
-        if val:
+        if not val:
+            if not required:
+                return
+            print(f"  {RED}  Required — please enter a value.{RESET}")
+            continue
+        is_valid, msg = validate_credential(key, val)
+        if is_valid:
+            if msg:
+                ok(msg)
             values[key] = val
             return
-        if not required:
-            return
-        print(f"  {RED}  Required — please enter a value.{RESET}")
+        else:
+            fail(msg)
+            if not yn("Try again?", default_yes=True):
+                info("Accepted as-is. Fix later with: python install.py --reconfigure")
+                values[key] = val
+                return
 
-print(f"  {DIM}Vonage — sign in at dashboard.nexmo.com{RESET}")
-collect("VONAGE_API_KEY",       "Vonage API key")
-collect("VONAGE_API_SECRET",    "Vonage API secret")
+print(f"  {BOLD}Vonage credentials{RESET}")
+print(f"  {DIM}No account yet? Sign up free at:  {CYAN}https://www.vonage.com/communications-apis/{RESET}")
+print(f"  {DIM}Find your key and secret at:       {CYAN}https://dashboard.nexmo.com/getting-started/api-credentials{RESET}")
+print()
+collect("VONAGE_API_KEY",       "Vonage API key  (8 alphanumeric characters)")
+collect("VONAGE_API_SECRET",    "Vonage API secret  (16+ characters)")
+
+# Validate key+secret pair together via a live API call
+_vk, _vs = values.get("VONAGE_API_KEY", ""), values.get("VONAGE_API_SECRET", "")
+if _vk and _vs:
+    while True:
+        try:
+            from vonage import Auth, Vonage
+            _bal = Vonage(Auth(api_key=_vk, api_secret=_vs)).account.get_balance()
+            ok(f"Vonage credentials verified  (account balance: {_bal.value:.4f})")
+            break
+        except Exception as _e:
+            _m = str(_e)
+            if "401" in _m or "auth" in _m.lower() or "invalid" in _m.lower():
+                fail("Vonage authentication failed — API key or secret is incorrect")
+                if yn("Re-enter Vonage credentials?", default_yes=True):
+                    values.pop("VONAGE_API_KEY", None)
+                    values.pop("VONAGE_API_SECRET", None)
+                    collect("VONAGE_API_KEY",    "Vonage API key  (8 alphanumeric characters)")
+                    collect("VONAGE_API_SECRET", "Vonage API secret  (16+ characters)")
+                    _vk = values.get("VONAGE_API_KEY", "")
+                    _vs = values.get("VONAGE_API_SECRET", "")
+                else:
+                    info("Continuing with unverified credentials")
+                    break
+            else:
+                info(f"Could not reach Vonage to verify (network: {_m[:60]}) — continuing")
+                break
+
 collect("VONAGE_PHONE_NUMBER",  "Vonage phone number  (E.164 format, e.g. +15551234567)")
 print()
-print(f"  {DIM}Groq — get a key at console.groq.com{RESET}")
+print(f"  {BOLD}Groq API key{RESET}")
+print(f"  {DIM}No account yet? Sign up free at:  {CYAN}https://console.groq.com{RESET}")
+print()
 collect("GROQ_API_KEY",         "Groq API key  (starts with gsk_)")
 print()
 print(f"  {DIM}Optional — enables HMAC signature verification on incoming webhooks{RESET}")
@@ -348,25 +432,43 @@ with open(env_path, "w", encoding="utf-8") as f:
 ok(".env saved")
 
 # ── Step 4: persona.txt ───────────────────────────────────────────────────────
-section("4  Bot persona  (persona.txt)")
+section("Bot persona  (persona.txt)")
 
 persona_path = os.path.join(HERE, "persona.txt")
 if os.path.isfile(persona_path):
     ok("persona.txt already exists")
 else:
-    info("No persona.txt found — creating a default one")
-    default = (
-        "You are a friendly and helpful assistant communicating over SMS.\n"
-        "Keep replies concise and clear — SMS has limited space.\n"
-        "Never use markdown formatting like ** or # since it won't render in SMS.\n"
-    )
+    info("No persona.txt found")
+    print()
+    if yn("Customize the bot persona now?", default_yes=False):
+        print(f"  {DIM}Press Enter to accept the default shown in brackets.{RESET}\n")
+        bot_name        = prompt("Bot name",                default="Alex")
+        bot_age         = prompt("Bot age",                 default="26")
+        bot_job         = prompt("Bot occupation",          default="personal assistant")
+        bot_personality = prompt("Personality description", default="warm, witty, and direct")
+        persona_text = (
+            f"Your name is {bot_name}. You are {bot_age} years old"
+            f" and work as a {bot_job}.\n"
+            f"You are {bot_personality}.\n"
+            "Communicate casually over text — no corporate tone, no stiff language.\n"
+            "Never use markdown formatting like ** or # since it won't render in SMS.\n"
+            "Keep replies short and natural since this is SMS, but be personal and genuine.\n"
+            "If you already know the person's name, use it occasionally to feel more personal.\n"
+        )
+        ok(f"persona.txt created for '{bot_name}'")
+    else:
+        persona_text = (
+            "You are a friendly and helpful assistant communicating over SMS.\n"
+            "Keep replies concise and clear — SMS has limited space.\n"
+            "Never use markdown formatting like ** or # since it won't render in SMS.\n"
+        )
+        ok("persona.txt created with default persona")
+        info(f"Edit {CYAN}persona.txt{RESET} any time to change the bot's personality")
     with open(persona_path, "w", encoding="utf-8") as f:
-        f.write(default)
-    ok("persona.txt created")
-    info(f"Edit {CYAN}persona.txt{RESET} to give the bot its personality")
+        f.write(persona_text)
 
 # ── Step 5: directories & log files ──────────────────────────────────────────
-section("5  Directories")
+section("Directories")
 for d in ("contacts", "logs"):
     path = os.path.join(HERE, d)
     existed = os.path.isdir(path)
@@ -383,7 +485,7 @@ for log_file in ("logs/chat.log", "logs/service.log"):
 
 # ── Step 6: tunnel / public URL ───────────────────────────────────────────────
 if IS_LOCAL:
-    section("6  Ngrok")
+    section("Ngrok")
     if shutil.which("ngrok"):
         ok("ngrok found in PATH")
         print()
@@ -403,7 +505,7 @@ if IS_LOCAL:
         info("After installing, re-run this script to set it up as a background service.")
 
 else:
-    section("6  Public URL (for Vonage webhooks)")
+    section("Public URL (for Vonage webhooks)")
     info("Your server needs a stable public HTTPS URL so Vonage can reach it.")
     print()
     tunnel_choice = choose(
@@ -458,7 +560,7 @@ else:
         info("Make sure your reverse proxy forwards requests to port 5000")
 
     # ── Step 7: systemd service ───────────────────────────────────────────────
-    section("7  Systemd service")
+    section("Systemd service")
     service_src = os.path.join(HERE, "sms-chatbot.service")
 
     if not os.path.isfile(service_src):
@@ -518,9 +620,34 @@ else:
             print(f"    {CYAN}sudo systemctl start sms-chatbot{RESET}")
             print(f"    {CYAN}sudo systemctl status sms-chatbot{RESET}")
 
-# ── Step 7/8: health check ────────────────────────────────────────────────────
-health_step = "8" if IS_SERVER else "7"
-section(f"{health_step}  Health check")
+# ── Webhook configuration guidance ───────────────────────────────────────────
+section("Configure Vonage webhook")
+print(f"""
+  {BOLD}The bot only receives texts if Vonage knows where to forward them.{RESET}
+  Here's exactly what to do — takes about 2 minutes:
+
+  1. Open:   {CYAN}https://dashboard.nexmo.com/your-numbers{RESET}
+  2. Find your Vonage number and click the {CYAN}gear icon ⚙{RESET} (Settings)
+  3. Under 'Messages', set {CYAN}Inbound webhook URL{RESET} to:""")
+
+if IS_LOCAL:
+    print(f"""
+        {CYAN}https://<YOUR-NGROK-URL>.ngrok-free.app/sms{RESET}
+     (Start ngrok first, then run {CYAN}python check_services.py{RESET} to get your live URL)
+""")
+else:
+    _domain = prompt("Your public domain (used in the instructions below)", default="yourdomain.com")
+    print(f"""
+        {CYAN}https://{_domain}/sms{RESET}
+""")
+
+print(f"  4. Set {CYAN}HTTP method{RESET} to POST")
+print(f"  5. Click {CYAN}Save changes{RESET}")
+print()
+info(f"Confirm your setup any time: {CYAN}python check_services.py{RESET}")
+
+# ── Health check ─────────────────────────────────────────────────────────────
+section("Health check")
 check_script = os.path.join(HERE, "check_services.py")
 if os.path.isfile(check_script):
     info("Running check_services.py ...\n")
@@ -529,23 +656,47 @@ else:
     info("check_services.py not found — skipping")
 
 # ── Done ──────────────────────────────────────────────────────────────────────
+ERROR_FIXES = {
+    "ngrok": (
+        f"Install: {CYAN}snap install ngrok{RESET}  OR  {CYAN}https://ngrok.com/download{RESET}\n"
+        f"       Then re-run: {CYAN}python install.py --reconfigure{RESET}"
+    ),
+    "ngrok authtoken missing": (
+        f"Run: {CYAN}ngrok config add-authtoken <YOUR_TOKEN>{RESET}\n"
+        f"       Get yours: {CYAN}https://dashboard.ngrok.com/get-started/your-authtoken{RESET}"
+    ),
+    "ngrok authtoken": (
+        f"Run: {CYAN}ngrok config add-authtoken <YOUR_TOKEN>{RESET}\n"
+        f"       Get yours: {CYAN}https://dashboard.ngrok.com/get-started/your-authtoken{RESET}"
+    ),
+    "sms-chatbot.service missing": (
+        "The service template is missing from the project directory.\n"
+        "       Re-clone the repo or download sms-chatbot.service from GitHub."
+    ),
+}
+DEFAULT_FIX = f"Re-run setup: {CYAN}python install.py --reconfigure{RESET}"
+
 print(f"\n{BOLD}{'─' * 48}{RESET}")
 if errors:
-    print(f"{BOLD}Setup mostly complete{RESET} — fix the items above, then:\n")
+    print(f"{BOLD}Setup mostly complete{RESET} — fix the item(s) below:\n")
+    for err in errors:
+        fix = ERROR_FIXES.get(err, DEFAULT_FIX)
+        print(f"  {RED}✗{RESET}  {err}")
+        print(f"       {YELLOW}Fix:{RESET} {fix}\n")
 else:
     print(f"{BOLD}Setup complete!{RESET}  Next steps:\n")
 
 if IS_LOCAL:
-    print(f"  1.  Start the bot:       {CYAN}python app.py{RESET}")
+    print(f"  1.  Start the bot:        {CYAN}python app.py{RESET}")
     print(f"  2.  Start ngrok:")
-    print(f"        As a service:      {CYAN}ngrok service start{RESET}  (if you set it up above)")
-    print(f"        Or manually:       {CYAN}ngrok http 5000{RESET}")
-    print(f"  3.  Copy the https URL ngrok gives you, append {CYAN}/sms{RESET},")
-    print(f"      and paste it as the inbound webhook URL in your Vonage dashboard.")
-    print(f"  4.  Check everything:    {CYAN}python check_services.py{RESET}")
+    print(f"        As a service:       {CYAN}ngrok service start{RESET}  (if configured above)")
+    print(f"        Or manually:        {CYAN}ngrok http 5000{RESET}")
+    print(f"  3.  Get your webhook URL: {CYAN}python check_services.py{RESET}")
+    print(f"        Then paste <ngrok-url>/sms into the Vonage dashboard (see Step 7 above)")
+    print(f"  4.  Text your Vonage number — the bot should reply")
 else:
-    print(f"  1.  Install the service (commands printed above)")
-    print(f"  2.  Start the service:   {CYAN}sudo systemctl start sms-chatbot{RESET}")
-    print(f"  3.  Set the Vonage inbound webhook URL to your public URL + {CYAN}/sms{RESET}")
-    print(f"  4.  Check everything:    {CYAN}python check_services.py{RESET}")
+    print(f"  1.  Install/start the service (commands printed above)")
+    print(f"  2.  Paste your webhook URL into the Vonage dashboard (see Step 8 above)")
+    print(f"  3.  Verify:               {CYAN}python check_services.py{RESET}")
+    print(f"  4.  Text your Vonage number — the bot should reply")
 print()
