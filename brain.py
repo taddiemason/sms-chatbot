@@ -48,13 +48,15 @@ if not log.handlers:
 groq_client = Groq(api_key=os.environ["GROQ_API_KEY"])
 history = ConversationHistory()
 
-BOT_PERSONA = profiles.load_persona() or SYSTEM_PROMPT
-log.info(f"[PERSONA] Loaded: {BOT_PERSONA[:80]}{'...' if len(BOT_PERSONA) > 80 else ''}")
+_startup_persona = profiles.load_persona() or SYSTEM_PROMPT
+log.info(f"[PERSONA] Loaded: {_startup_persona[:80]}{'...' if len(_startup_persona) > 80 else ''}")
 
 
 def _build_system_content(sender_id: str) -> str:
+    # Reload persona on every message so edits to persona.txt take effect without a
+    # restart — same live-reload behavior as contact files below.
     contact = profiles.load_contact(sender_id)
-    content = BOT_PERSONA
+    content = profiles.load_persona() or SYSTEM_PROMPT
     if contact:
         content += f"\n\nWhat you know about this person:\n{contact}"
     content += f"\n\nCurrent date and time: {datetime.now().strftime('%A, %B %d, %Y at %I:%M %p')}"
