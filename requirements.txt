@@ -3,3 +3,4 @@ gunicorn
 vonage
 groq
 python-dotenv
+requests

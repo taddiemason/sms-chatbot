@@ -18,9 +18,19 @@ LOGS_DIR = "logs"
 MAX_HISTORY_MESSAGES = 20
 CONVERSATION_EXPIRY_HOURS = 24
 
-# ─── Number Filter ─────────────────────────────────────────────────────────────
+# ─── Channels ──────────────────────────────────────────────────────────────────
+# SMS is served by app.py (Vonage webhook). Telegram is served by run_telegram.py
+# (long-polling). Each runs as its own process; toggle Telegram here.
+ENABLE_TELEGRAM = True
+
+# ─── Number Filter (SMS) ─────────────────────────────────────────────────────────
 # Leave empty to respond to everyone, or add numbers in E.164 format to whitelist.
 ALLOWED_NUMBERS = set()
+
+# ─── Chat ID Filter (Telegram) ───────────────────────────────────────────────────
+# Leave empty to respond to everyone, or add Telegram chat IDs (as strings) to
+# whitelist, e.g. {"123456789"}. A user's chat ID is logged on their first message.
+TELEGRAM_ALLOWED_CHAT_IDS = set()
 
 # ─── Typing Delay ──────────────────────────────────────────────────────────────
 # Simulates a human typing the reply before sending.

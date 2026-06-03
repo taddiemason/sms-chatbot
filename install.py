@@ -107,6 +107,18 @@ def validate_credential(key, value):
             return False, "Must be E.164 format: + followed by 10–15 digits (e.g. +15551234567)"
         return True, ""
 
+    if key == "TELEGRAM_BOT_TOKEN":
+        if not re.fullmatch(r"\d+:[\w-]{30,}", value):
+            return False, "Telegram tokens look like '123456789:ABC-DEF...' (get one from @BotFather)"
+        try:
+            import requests
+            resp = requests.get(f"https://api.telegram.org/bot{value}/getMe", timeout=10).json()
+            if resp.get("ok"):
+                return True, f"Telegram bot validated (@{resp['result'].get('username')})"
+            return False, "Telegram rejected this token — check @BotFather"
+        except Exception as e:
+            return True, f"Could not reach Telegram to verify (network: {str(e)[:60]}) — accepted"
+
     return True, ""
 
 def setup_ngrok_as_service():
@@ -426,6 +438,13 @@ print()
 print(f"  {DIM}Optional — enables HMAC signature verification on incoming webhooks{RESET}")
 collect("VONAGE_SIGNATURE_SECRET", "Vonage signature secret", required=False)
 
+print()
+print(f"  {BOLD}Telegram  (optional second channel){RESET}")
+print(f"  {DIM}Lets the bot message out via Telegram — no phone number or public webhook needed.{RESET}")
+print(f"  {DIM}Create a bot in Telegram by messaging @BotFather and sending /newbot, then paste{RESET}")
+print(f"  {DIM}the token here. Leave blank to use SMS only.{RESET}")
+collect("TELEGRAM_BOT_TOKEN", "Telegram bot token", required=False)
+
 with open(env_path, "w", encoding="utf-8") as f:
     for k, v in values.items():
         f.write(f"{k}={v}\n")
@@ -699,4 +718,9 @@ else:
     print(f"  2.  Paste your webhook URL into the Vonage dashboard (see Step 8 above)")
     print(f"  3.  Verify:               {CYAN}python check_services.py{RESET}")
     print(f"  4.  Text your Vonage number — the bot should reply")
+
+if values.get("TELEGRAM_BOT_TOKEN"):
+    print(f"\n  {BOLD}Telegram channel{RESET} (runs as its own process, alongside SMS):")
+    print(f"        Start it:           {CYAN}python run_telegram.py{RESET}")
+    print(f"        Then open your bot in Telegram, press {CYAN}Start{RESET}, and send a message.")
 print()

@@ -64,6 +64,9 @@ for var in required:
 sig = os.environ.get("VONAGE_SIGNATURE_SECRET", "")
 warn("VONAGE_SIGNATURE_SECRET", "set" if sig else "not set — webhook signature verification disabled")
 
+tg_token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+warn("TELEGRAM_BOT_TOKEN", "set" if tg_token else "not set — Telegram channel disabled (run_telegram.py)")
+
 # ── 2. Required files ─────────────────────────────────────────────────────────
 print(f"\n{YELLOW}Required files{RESET}")
 
@@ -87,6 +90,7 @@ pkg_map = {
     "groq":       "groq",
     "dotenv":     "dotenv",
     "gunicorn":   "gunicorn",
+    "requests":   "requests",
 }
 for display, import_name in pkg_map.items():
     try:
@@ -140,6 +144,22 @@ if vonage_number:
     check("VONAGE_PHONE_NUMBER", True, vonage_number)
 else:
     check("VONAGE_PHONE_NUMBER", False, "not set")
+
+# ── 5b. Telegram API (optional) ───────────────────────────────────────────────
+print(f"\n{YELLOW}Telegram API{RESET}")
+
+if not tg_token:
+    warn("Telegram", "TELEGRAM_BOT_TOKEN not set — skipping (channel disabled)")
+else:
+    try:
+        import requests
+        resp = requests.get(f"https://api.telegram.org/bot{tg_token}/getMe", timeout=10).json()
+        if resp.get("ok"):
+            check("Telegram API", True, f"@{resp['result'].get('username')}")
+        else:
+            check("Telegram API", False, resp.get("description", "getMe failed — check TELEGRAM_BOT_TOKEN"))
+    except Exception as e:
+        check("Telegram API", False, str(e)[:80])
 
 # ── 6. Flask server ───────────────────────────────────────────────────────────
 print(f"\n{YELLOW}Flask server (localhost:5000){RESET}")

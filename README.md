@@ -1,6 +1,8 @@
-# SMS AI Chatbot
+# SMS + Telegram AI Chatbot
 
-An SMS chatbot powered by [Groq](https://console.groq.com) and [Vonage](https://vonage.com). When someone texts your Vonage number, the bot replies using a large language model — with per-sender conversation memory, a fully customizable persona, automatic contact learning, and a human-like typing delay.
+A multi-channel AI chatbot powered by [Groq](https://console.groq.com). It replies over **SMS** (via [Vonage](https://vonage.com)) and/or **Telegram** — with per-sender conversation memory, a fully customizable persona, automatic contact learning, and a human-like typing delay.
+
+The two channels share the same brain (`brain.py`); only the thin send/receive edges differ. **Telegram needs no phone number and no public webhook** (it long-polls), which makes it a regulation-free way to let the bot message out when acquiring/registering an SMS number is a hurdle. Users opt in by pressing **Start** on the bot once.
 
 Something not working? See [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
 
@@ -8,7 +10,9 @@ Something not working? See [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
 
 ## Features
 
-- **AI replies over SMS** — powered by Groq's fast LLM inference (Llama 3.3 70B by default)
+- **AI replies over SMS and Telegram** — powered by Groq's fast LLM inference (Llama 3.3 70B by default)
+- **Telegram channel** — no phone number, no public webhook; runs as its own long-polling process alongside (or instead of) SMS
+- **Shared brain** — persona, memory, contact learning, and typing delays are identical across both channels
 - **Bot persona file** — define the bot's name, personality, and backstory in `persona.txt`
 - **Per-contact memory** — the bot automatically learns and remembers facts about each person it talks to
 - **Conversation history** — each sender gets their own rolling context window
@@ -16,7 +20,7 @@ Something not working? See [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
 - **Conversation logs** — every message saved to daily rotating log files in `logs/`
 - **Auto-expiry** — conversation history clears automatically after inactivity
 - **Reset command** — users can text `reset` to wipe their history and start fresh
-- **Number whitelist** — optionally restrict the bot to specific phone numbers only
+- **Number / chat ID whitelist** — optionally restrict SMS to specific phone numbers, or Telegram to specific chat IDs
 - **Optional webhook signature verification** — rejects spoofed requests when `VONAGE_SIGNATURE_SECRET` is set
 - **Graceful error handling** — friendly fallback message if the AI API fails
 
@@ -26,8 +30,14 @@ Something not working? See [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
 
 ```
 sms-chatbot/
-├── app.py                # Flask server and Vonage webhook handler
-├── config.py             # All settings: model, delays, filters, paths
+├── brain.py              # Channel-agnostic core: LLM call, memory, persona, typing delays
+├── app.py                # SMS channel — Flask server and Vonage webhook handler
+├── run_telegram.py       # Telegram channel — long-polling runner (no phone number/webhook)
+├── channels/
+│   ├── base.py           # Messenger interface (send(to, text))
+│   ├── vonage_sms.py     # VonageMessenger — outbound SMS
+│   └── telegram.py       # TelegramMessenger — send + long-polling
+├── config.py             # All settings: model, delays, channel toggles, filters, paths
 ├── conversation.py       # Per-sender conversation history with auto-expiry
 ├── profiles.py           # Persona loading and contact file management
 ├── send.py               # Standalone utility for sending one-off SMS messages
@@ -35,7 +45,7 @@ sms-chatbot/
 ├── check_services.py     # Health check — verifies all services are running
 ├── persona.txt           # Who the bot is — edit this to change its identity
 ├── sms-chatbot.service   # Systemd service file for homelab/Linux deployment
-├── contacts/             # Auto-created; one .txt file per phone number
+├── contacts/             # Auto-created; one .txt file per sender (phone number or chat ID)
 ├── logs/                 # Auto-created; daily rotating conversation logs
 ├── requirements.txt      # Python dependencies
 ├── .env.example          # Template for required environment variables
@@ -162,15 +172,19 @@ VONAGE_API_SECRET=xxxxxxxxxxxxxxxx
 VONAGE_PHONE_NUMBER=+1xxxxxxxxxx
 VONAGE_SIGNATURE_SECRET=            # leave blank to skip signature checks
 GROQ_API_KEY=gsk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+TELEGRAM_BOT_TOKEN=                 # optional — only if running the Telegram channel
 ```
 
 | Variable | Where to find it |
 |---|---|
-| `VONAGE_API_KEY` | Vonage dashboard → main page, top section |
-| `VONAGE_API_SECRET` | Same location as API Key |
+| `VONAGE_API_KEY` | Vonage dashboard → main page, top section (SMS channel) |
+| `VONAGE_API_SECRET` | Same location as API Key (SMS channel) |
 | `VONAGE_PHONE_NUMBER` | The number you bought in Step 4b (E.164 format, e.g. `+15551234567`) |
 | `VONAGE_SIGNATURE_SECRET` | Account Settings → API Settings (optional) |
 | `GROQ_API_KEY` | [console.groq.com](https://console.groq.com) → API Keys |
+| `TELEGRAM_BOT_TOKEN` | From [@BotFather](https://t.me/BotFather) → `/newbot` (optional — Telegram channel only) |
+
+> **SMS-only or Telegram-only?** The Vonage variables are only needed if you run the SMS channel (`app.py`), and `TELEGRAM_BOT_TOKEN` is only needed for the Telegram channel (`run_telegram.py`). `GROQ_API_KEY` is always required.
 
 ### Step 6 — Set up the bot's persona
 
@@ -228,6 +242,47 @@ If you used `install.py`, run `python check_services.py` to get your live ngrok 
 Text your Vonage number — the bot will reply.
 
 > **Note:** Free ngrok URLs change every time you restart it. Update the webhook URL in the Vonage dashboard each session, or use a paid ngrok plan for a fixed URL.
+
+---
+
+## Running on Telegram
+
+Telegram is a second channel that runs **independently** of SMS — it needs no phone number and no public webhook, because it long-polls Telegram's servers for incoming messages. You can run it alongside SMS, or on its own.
+
+### Step 1 — Create a bot and get a token
+
+1. In Telegram, open a chat with [@BotFather](https://t.me/BotFather)
+2. Send `/newbot` and follow the prompts (choose a name and a username ending in `bot`)
+3. BotFather replies with a token like `123456789:ABCdef...` — copy it
+4. Put it in your `.env` as `TELEGRAM_BOT_TOKEN` (the installer prompts for this too)
+
+### Step 2 — Start the Telegram runner
+
+```bash
+python run_telegram.py
+```
+
+You should see `[TELEGRAM] Connected as @your_bot` followed by `[TELEGRAM] Long-polling started`.
+
+### Step 3 — Talk to your bot
+
+Open your bot in Telegram (`https://t.me/your_bot_username`), press **Start**, and send a message. The bot replies using the same persona, memory, and typing-delay behavior as SMS.
+
+> **Why pressing Start matters:** Telegram bots can't message a user until that user has started the bot — that first message is how the bot learns the user's `chat_id` (it's logged on arrival). This is Telegram's built-in anti-spam consent, and it's why no phone number or A2P registration is involved. To restrict who the bot talks to, add chat IDs to `TELEGRAM_ALLOWED_CHAT_IDS` in `config.py`.
+
+### Running both channels together
+
+SMS and Telegram are separate processes — run them side by side:
+
+```bash
+# Terminal 1 (SMS):
+python app.py            # or: gunicorn app:app
+
+# Terminal 2 (Telegram):
+python run_telegram.py
+```
+
+On a Linux server you can give Telegram its own systemd service (copy `sms-chatbot.service`, change `ExecStart` to `.../venv/bin/python run_telegram.py`, and name it e.g. `telegram-chatbot`). To disable Telegram without removing the token, set `ENABLE_TELEGRAM = False` in `config.py`.
 
 ---
 
@@ -377,6 +432,14 @@ Set `AUTO_UPDATE_CONTACTS = False` in `config.py` to disable automatic learning.
 
 All settings live in `config.py`. Restart the server after making changes.
 
+### Channels
+
+| Setting | Default | Description |
+|---|---|---|
+| `ENABLE_TELEGRAM` | `True` | Whether `run_telegram.py` starts the Telegram poller |
+
+SMS is served by `app.py` (Vonage webhook); Telegram is served by `run_telegram.py` (long-polling). Each runs as its own process.
+
 ### AI
 
 | Setting | Default | Description |
@@ -406,16 +469,20 @@ Available Groq models:
 | `AUTO_UPDATE_CONTACTS` | `True` | Auto-extract facts into contact files after each exchange |
 | `CONTACTS_DIR` | `"contacts"` | Folder where contact files are stored |
 
-### Number Filter
+### Sender Filters
+
+SMS filters on phone number; Telegram filters on chat ID. Both default to empty (respond to everyone):
 
 ```python
-ALLOWED_NUMBERS = set()  # empty = respond to everyone
+ALLOWED_NUMBERS = set()            # SMS — empty = respond to everyone
+TELEGRAM_ALLOWED_CHAT_IDS = set()  # Telegram — empty = respond to everyone
 ```
 
-To restrict to specific numbers:
+To restrict to specific senders:
 
 ```python
 ALLOWED_NUMBERS = {"+15551234567", "+15559876543"}
+TELEGRAM_ALLOWED_CHAT_IDS = {"123456789"}   # chat IDs are logged on first message
 ```
 
 ### Typing Delay
@@ -446,7 +513,7 @@ Verify that all required services are reachable before starting (or to diagnose 
 python check_services.py
 ```
 
-Checks in order: env vars set, `persona.txt` present, Python packages installed, Groq API reachable, Vonage API reachable, Flask server on port 5000, and active ngrok tunnel. If an ngrok tunnel to port 5000 is found, it prints the full Vonage webhook URL so you can copy it directly.
+Checks in order: env vars set, `persona.txt` present, Python packages installed, Groq API reachable, Vonage API reachable, Telegram API reachable (if `TELEGRAM_BOT_TOKEN` is set), Flask server on port 5000, and active ngrok tunnel. If an ngrok tunnel to port 5000 is found, it prints the full Vonage webhook URL so you can copy it directly.
 
 Exits with code `0` if everything passes, `1` if anything needs attention. Can be chained:
 
@@ -567,6 +634,8 @@ Background thread: extract new facts → append to contacts/<number>.txt
 Everything logged to logs/chat.log
 ```
 
+**Telegram follows the same path**, only the edges differ: `run_telegram.py` long-polls `getUpdates`, applies the `TELEGRAM_ALLOWED_CHAT_IDS` filter, and calls the same `brain.process_message(messenger, chat_id, text)`. Replies are sent via the Telegram Bot API instead of Vonage. Memory and contact files are keyed by `chat_id` rather than phone number.
+
 ---
 
 ## Security Notes
@@ -574,4 +643,5 @@ Everything logged to logs/chat.log
 - **Never commit `.env`** — it's in `.gitignore` by default
 - **`contacts/` and `logs/` are gitignored** — personal info and conversations stay local
 - **Set `VONAGE_SIGNATURE_SECRET`** to enable HMAC webhook verification and reject spoofed requests
-- **Use `ALLOWED_NUMBERS`** in `config.py` to restrict which numbers the bot responds to
+- **Use `ALLOWED_NUMBERS` / `TELEGRAM_ALLOWED_CHAT_IDS`** in `config.py` to restrict which SMS numbers or Telegram chat IDs the bot responds to
+- **`TELEGRAM_BOT_TOKEN` is a secret** — anyone with it controls your bot; keep it in `.env` only
