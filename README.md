@@ -286,19 +286,19 @@ On a Linux server you can give Telegram its own systemd service (copy `sms-chatb
 
 ### Restarting everything (Windows)
 
-One copy-pasteable PowerShell command that stops the bot, pulls the latest code, and reopens both channels each in their own window:
+Run this from **inside your cloned repo folder** — it captures the current directory, so there are no hardcoded paths. It stops the bot, pulls the latest code, and reopens both channels each in their own window:
 
 ```powershell
-Get-Process python -ErrorAction SilentlyContinue | Stop-Process -Force; cd C:\Users\zlalime\Documents\Github\sms-chatbot; git pull; Start-Process powershell '-NoExit','-Command','cd C:\Users\zlalime\Documents\Github\sms-chatbot; python app.py'; Start-Process powershell '-NoExit','-Command','cd C:\Users\zlalime\Documents\Github\sms-chatbot; python run_telegram.py'
+$repo=$PWD.Path; Get-Process python -ErrorAction SilentlyContinue | Stop-Process -Force; git pull; Start-Process powershell '-NoExit','-Command',"cd '$repo'; python app.py"; Start-Process powershell '-NoExit','-Command',"cd '$repo'; python run_telegram.py"
 ```
 
 Telegram-only (skip the SMS window):
 
 ```powershell
-Get-Process python -ErrorAction SilentlyContinue | Stop-Process -Force; cd C:\Users\zlalime\Documents\Github\sms-chatbot; git pull; Start-Process powershell '-NoExit','-Command','cd C:\Users\zlalime\Documents\Github\sms-chatbot; python run_telegram.py'
+$repo=$PWD.Path; Get-Process python -ErrorAction SilentlyContinue | Stop-Process -Force; git pull; Start-Process powershell '-NoExit','-Command',"cd '$repo'; python run_telegram.py"
 ```
 
-> `Stop-Process python` kills **all** Python processes on the machine — fine if the bot is the only Python you run. Adjust the path if your clone lives elsewhere.
+> `Stop-Process python` kills **all** Python processes on the machine — fine if the bot is the only Python you run.
 
 ---
 
