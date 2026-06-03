@@ -284,9 +284,11 @@ python run_telegram.py
 
 On a Linux server you can give Telegram its own systemd service (copy `sms-chatbot.service`, change `ExecStart` to `.../venv/bin/python run_telegram.py`, and name it e.g. `telegram-chatbot`). To disable Telegram without removing the token, set `ENABLE_TELEGRAM = False` in `config.py`.
 
-### Restarting everything (Windows)
+### Restarting everything
 
-Run this from **inside your cloned repo folder** — it captures the current directory, so there are no hardcoded paths. It stops the bot, pulls the latest code, and reopens both channels each in their own window:
+Run these from **inside your cloned repo folder** — they use the current directory, so there are no hardcoded paths.
+
+**Windows (PowerShell)** — stops the bot, pulls the latest code, and reopens both channels each in their own window:
 
 ```powershell
 $repo=$PWD.Path; Get-Process python -ErrorAction SilentlyContinue | Stop-Process -Force; git pull; Start-Process powershell '-NoExit','-Command',"cd '$repo'; python app.py"; Start-Process powershell '-NoExit','-Command',"cd '$repo'; python run_telegram.py"
@@ -298,7 +300,25 @@ Telegram-only (skip the SMS window):
 $repo=$PWD.Path; Get-Process python -ErrorAction SilentlyContinue | Stop-Process -Force; git pull; Start-Process powershell '-NoExit','-Command',"cd '$repo'; python run_telegram.py"
 ```
 
-> `Stop-Process python` kills **all** Python processes on the machine — fine if the bot is the only Python you run.
+**Linux (systemd)** — if you run the channels as services (see deployment below):
+
+```bash
+git pull && sudo systemctl restart sms-chatbot telegram-chatbot
+```
+
+**Linux (manual, no systemd)** — pulls and relaunches both in the background, logging to `logs/`:
+
+```bash
+pkill -f app.py; pkill -f run_telegram.py; git pull; nohup python app.py > logs/service.log 2>&1 & nohup python run_telegram.py >> logs/service.log 2>&1 &
+```
+
+Telegram-only (manual):
+
+```bash
+pkill -f run_telegram.py; git pull; nohup python run_telegram.py > logs/service.log 2>&1 &
+```
+
+> The Windows `Stop-Process python` and the Linux `pkill` stop the bot's processes — fine when the bot is the only thing running. The systemd command only touches the named services. On Linux, activate your virtualenv (`source venv/bin/activate`) first if you use one.
 
 ---
 
